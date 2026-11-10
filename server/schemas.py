@@ -23,3 +23,36 @@ class FollowupSuggestion(BaseModel):
         description="이어갈 질문. 제안하지 않을 때는 빈 문자열",
     )
 
+
+class WantedPlace(BaseModel):
+    name: str = Field(
+        description="가보고 싶다고 말한 장소 이름",
+    )
+    speaker: str = Field(
+        description="해당 장소에 가보고 싶다고 말한 사람",
+    )
+    reason: str = Field(
+        description="그 장소에서 하고 싶다고 말한 일을 한 문장으로 정리한 내용",
+    )
+
+
+class Story(BaseModel):
+    title: str = Field(
+        description="이야기의 핵심을 담은 짧은 한 줄 제목",
+    )
+    summary: str = Field(
+        description="대화에서 확인된 내용만 담은 이야기 요약",
+    )
+    speakers: list[str] = Field(
+        description="이야기에 참여한 사람 이름",
+    )
+    wanted_places: list[WantedPlace] = Field(
+        description="이야기에서 가보고 싶다고 말한 장소. 없으면 빈 목록",
+    )
+
+
+class ConversationSummary(BaseModel):
+    stories: list[Story] = Field(
+        description="주제별로 구분해 정리한 가족 이야기. 대화가 없으면 빈 목록",
+    )
+

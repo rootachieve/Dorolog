@@ -3,7 +3,12 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from .schemas import FirstQuestion, FollowupSuggestion, TopicRecommendations
+from .schemas import (
+    ConversationSummary,
+    FirstQuestion,
+    FollowupSuggestion,
+    TopicRecommendations,
+)
 
 
 load_dotenv()
@@ -66,7 +71,6 @@ def create_followup_question(topic: str, recent_conversation: str) -> FollowupSu
     """30초 무음 뒤 최근 대화에 이어지는 질문을 제안할지 판단한다."""
     response = client.responses.parse(
         model=MODEL,
-        reasoning={"effort": "low"},
         input=[
             {
                 "role": "system",
@@ -86,6 +90,33 @@ def create_followup_question(topic: str, recent_conversation: str) -> FollowupSu
             },
         ],
         text_format=FollowupSuggestion,
+    )
+
+    return response.output_parsed
+
+
+def organize_conversation(conversation: str) -> ConversationSummary:
+    """가족 대화를 이야기별로 나누고 제목, 요약, 방문 희망 장소를 추출한다."""
+    response = client.responses.parse(
+        model=MODEL,
+        input=[
+            {
+                "role": "system",
+                "content": (
+                    "당신은 차량 안에서 나눈 가족 대화를 기록하는 정리자입니다. "
+                    "대화의 중심 주제가 바뀔 때만 이야기를 구분하고, 각 이야기의 짧은 제목과 요약을 만드세요. "
+                    "각 이야기에 실제로 참여한 사람의 이름도 추출하세요. "
+                    "장소는 누군가 그곳에 가고 싶거나 그곳에서 무언가 하고 싶다고 명확히 말한 경우에만 "
+                    "이름, 말한 사람, 하고 싶은 일을 추출하세요. 단순히 언급된 장소는 제외하세요. "
+                    "대화에 없는 내용을 추측하지 말고, 정리할 대화가 없으면 stories를 빈 목록으로 반환하세요."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"가족 대화:\n{conversation}",
+            },
+        ],
+        text_format=ConversationSummary,
     )
 
     return response.output_parsed
