@@ -1,6 +1,30 @@
 from pydantic import BaseModel, Field
 
 
+class TopicRequest(BaseModel):
+    destination: str
+
+
+class FirstQuestionRequest(BaseModel):
+    destination: str
+    topic: str
+
+
+class FollowupQuestionRequest(BaseModel):
+    topic: str
+    recent_conversation: str
+
+
+class RecordingStartRequest(BaseModel):
+    destination: str
+    topic: str
+
+
+class TranscriptRequest(BaseModel):
+    speaker: str
+    text: str
+
+
 class TopicRecommendations(BaseModel):
     topics: list[str] = Field(
         min_length=2,
