@@ -16,18 +16,18 @@ AI 기능은 Python 함수로 구현했고, 앱에서는 FastAPI를 통해 JSON�
 
 ## 구현 완료
 
-- 목적지를 반영한 대화 주제 2개 추천
-- 선택한 주제로 첫 질문 생성
-- 최근 대화를 반영한 후속 질문 생성 또는 제안 없음 반환
-- 대화를 이야기별로 구분
-- 이야기 제목, 요약, 참여자 추출
-- 가보고 싶은 장소와 말한 사람, 이유 추출
-- 여정별 기록 시작
-- 음성 인식된 대화 텍스트 누적
-- 현재 이야기 미리보기
-- 현재까지의 이야기 저장
-- 기록 종료 시 남은 대화 자동 저장
-- 위 기능을 호출할 수 있는 FastAPI 엔드포인트
+- 목적지를 반영한 대화 주제 2개 추천 (`recommend_topics()`)
+- 선택한 주제로 첫 질문 생성 (`create_first_question()`)
+- 최근 대화를 반영한 후속 질문 생성 또는 제안 없음 반환 (`create_followup_question()`)
+- 대화를 이야기별로 구분 (`organize_conversation()`)
+- 이야기 제목, 요약, 참여자 추출 (`organize_conversation()`)
+- 가보고 싶은 장소와 말한 사람, 이유 추출 (`organize_conversation()`)
+- 여정별 기록 시작 (`start_recording()`)
+- 음성 인식된 대화 텍스트 누적 (`add_transcript()`)
+- 현재 이야기 미리보기 (`preview_current_story()`)
+- 현재까지의 이야기 저장 (`save_current_story()`)
+- 기록 종료 시 남은 대화 자동 저장 (`stop_recording()`)
+- 위 기능을 호출할 수 있는 FastAPI 엔드포인트 (`server/api.py`)
 
 ## API
 
