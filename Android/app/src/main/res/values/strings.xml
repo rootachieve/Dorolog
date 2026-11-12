@@ -1,0 +1,27 @@
+<resources>
+    <string name="app_name">Dorolog</string>
+    <string name="start">시작하기</string>
+    <string name="archive">이야기 보관함</string>
+    <string name="brand">도로록: DoRo Log</string>
+    <string name="back">뒤로가기</string>
+    <string name="departure">출발 전</string>
+    <string name="driving">주행 중</string>
+    <string name="recommendation_tip">Tip! : 좌우로 넘기면 다른 추천 질문으로 바뀌어요</string>
+    <string name="previous_topic">이전 추천 질문</string>
+    <string name="next_topic">다음 추천 질문</string>
+    <string name="loading_recommendations">추천 질문을 준비하고 있어요</string>
+    <string name="recommendations_unavailable">추천 질문을 불러오지 못했어요</string>
+    <string name="recommendations_empty">아직 준비된 추천 질문이 없어요</string>
+    <string name="retry">다시 시도</string>
+    <string name="departure_countdown">%1$d초 뒤 대화를 시작해요</string>
+    <string name="motion_unavailable">출발 감지를 사용할 수 없어요.</string>
+    <string name="pause_conversation">대화 일시정지</string>
+    <string name="conversation_paused">일시정지</string>
+    <string name="resume_conversation">재개</string>
+    <string name="finish_conversation">종료하기</string>
+    <string name="audio_waiting">안내가 끝나면 대화를 이어갈게요</string>
+    <string name="destination_arrived">목적지 도착</string>
+    <string name="arrival_message">목적지에 도착해 대화를 마쳤어요</string>
+    <string name="arrival_without_server">대화 서버 연결 후 이야기 요약을 확인할 수 있어요</string>
+    <string name="confirm">확인</string>
+</resources>
