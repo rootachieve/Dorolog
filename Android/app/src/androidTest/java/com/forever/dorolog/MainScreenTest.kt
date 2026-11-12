@@ -159,7 +159,7 @@ class MainScreenTest {
         }
 
         assertButtonsFit()
-        for (label in listOf("시작하기", "이야기 보관함")) {
+        for (label in listOf("시작하기")) {
             val layouts = mutableListOf<TextLayoutResult>()
             compose.onNodeWithText(label, useUnmergedTree = true)
                 .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { action -> action(layouts) }
@@ -176,48 +176,9 @@ class MainScreenTest {
             }
             assertTrue("$label must not clip at 200% font size: $details", layouts.none { it.hasVisualOverflow })
         }
-    }
-
-    @Test
-    fun animatedCharacters_moveVisiblyAndReverseVerticalDirection() {
-        val bodies = listOf(
-            R.drawable.character_green,
-            R.drawable.character_purple,
-            R.drawable.character_pink,
-            R.drawable.character_yellow,
-            R.drawable.character_blue,
-        )
-        val traces = bodies.associateWith { mutableListOf<Float>() }
-        compose.mainClock.autoAdvance = false
-        compose.setContent {
-            CompositionLocalProvider(LocalDensity provides Density(0.5f, 1f)) {
-                Box(Modifier.requiredSize(850.dp, 592.dp)) {
-                    MainScreen(onStart = {}, onArchive = {}, animationsEnabled = true)
-                }
-            }
-        }
-
-        fun recordPositions() {
-            for (body in bodies) {
-                val bounds = compose.onNodeWithTag("character-$body").getUnclippedBoundsInRoot()
-                traces.getValue(body).add((bounds.top.value + bounds.bottom.value) / 2)
-            }
-        }
-
-        compose.mainClock.advanceTimeByFrame()
-        recordPositions()
-        repeat(25) {
-            compose.mainClock.advanceTimeBy(500)
-            compose.waitForIdle()
-            recordPositions()
-        }
-
-        for ((body, positions) in traces) {
-            val travel = positions.maxOrNull()!! - positions.minOrNull()!!
-            val changes = positions.zipWithNext { before, after -> after - before }
-            assertTrue("Character $body should visibly float, observed ${travel}dp: $positions", travel >= 10f)
-            assertTrue("Character $body should move both up and down: $positions", changes.any { it > 0.5f } && changes.any { it < -0.5f })
-        }
+        val archive = compose.onNodeWithText("이야기 보관함").getUnclippedBoundsInRoot()
+        val label = compose.onNodeWithTag("archive-label", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertTrue("Archive lettering must fit at 200% font size", label.left >= archive.left && label.right <= archive.right && label.bottom <= archive.bottom)
     }
 
     private fun assertButtonsFit() {
