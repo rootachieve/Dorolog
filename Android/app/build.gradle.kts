@@ -20,6 +20,9 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "com.forever.dorolog.DorologTestRunner"
+        val voiceUrl = providers.gradleProperty("dorolog.voiceUrl").orElse("").get()
+        require(voiceUrl.isEmpty() || voiceUrl.startsWith("wss://")) { "dorolog.voiceUrl must use wss://" }
+        buildConfigField("String", "DRIVING_VOICE_URL", "\"${voiceUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
 
     buildTypes {
@@ -37,6 +40,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -57,6 +61,9 @@ dependencies {
     implementation(libs.retrofit)
     implementation(libs.retrofit.gson)
     implementation(libs.pleos.navi)
+    implementation(libs.pleos.vehicle)
+    implementation(libs.compose.audiowaveform)
+    implementation(libs.okhttp)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     testImplementation(libs.junit)

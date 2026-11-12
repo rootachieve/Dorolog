@@ -20,6 +20,10 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven {
+            url = uri("https://jitpack.io")
+            content { includeGroup("com.github.lincollincol") }
+        }
+        maven {
             url = uri("https://nexus-playground.pleos.ai/repository/maven-releases/")
             content { includeGroup("ai.pleos.playground") }
         }
@@ -28,4 +32,3 @@ dependencyResolutionManagement {
 
 rootProject.name = "Dorolog"
 include(":app")
- 
