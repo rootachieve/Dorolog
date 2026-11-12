@@ -1,5 +1,7 @@
 package com.forever.dorolog
 
+import android.graphics.Bitmap
+import android.os.SystemClock
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.requiredSize
@@ -12,6 +14,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.StateRestorationTester
@@ -22,10 +25,16 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -37,6 +46,30 @@ import org.junit.runner.RunWith
 class MainScreenTest {
     @get:Rule
     val compose = createComposeRule()
+
+    @Test
+    fun entryVideo_runsAtDoubleSpeed_andLoopsPastTheEnd() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val prepared = CountDownLatch(1)
+        val player = createIntroPlayer(instrumentation.targetContext)
+        try {
+            player.setOnPreparedListener { prepared.countDown() }
+            player.prepareAsync()
+            assertTrue("Video must decode", prepared.await(10, TimeUnit.SECONDS))
+            player.start()
+            compose.waitUntil(timeoutMillis = 10_000) { player.currentPosition >= 500 }
+            val startPosition = player.currentPosition
+            val startTime = SystemClock.elapsedRealtime()
+            SystemClock.sleep(1_200)
+            val rate = (player.currentPosition - startPosition).toFloat() / (SystemClock.elapsedRealtime() - startTime)
+            assertEquals("Playback must run at 2x", 2f, rate, 0.35f)
+            SystemClock.sleep(15_000)
+            assertTrue("Video must keep playing after its 15 second loop", player.isPlaying)
+            assertTrue("Playback must have wrapped to the beginning", player.currentPosition < 8_000)
+        } finally {
+            player.release()
+        }
+    }
 
     @Test
     fun start_waitsForWhiteFade_thenNavigatesOnce() {
@@ -179,6 +212,43 @@ class MainScreenTest {
         val archive = compose.onNodeWithText("이야기 보관함").getUnclippedBoundsInRoot()
         val label = compose.onNodeWithTag("archive-label", useUnmergedTree = true).getUnclippedBoundsInRoot()
         assertTrue("Archive lettering must fit at 200% font size", label.left >= archive.left && label.right <= archive.right && label.bottom <= archive.bottom)
+    }
+
+    @Test
+    fun road_reachesTheBottom_whenTheWindowIsResized() {
+        val windowSize = mutableStateOf(DpSize(360.dp, 640.dp))
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(0.5f, 1f)) {
+                Box(Modifier.requiredSize(windowSize.value.width, windowSize.value.height).testTag("viewport")) {
+                    MainScreen(onStart = {}, onArchive = {}, animationsEnabled = false)
+                }
+            }
+        }
+        for (size in listOf(DpSize(360.dp, 640.dp), DpSize(850.dp, 592.dp), DpSize(640.dp, 320.dp))) {
+            compose.runOnIdle { windowSize.value = size }
+            val screenshot = compose.onNodeWithTag("viewport").captureToImage()
+            File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "entry-${size.width.value.toInt()}x${size.height.value.toInt()}.png")
+                .outputStream().use { screenshot.asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it) }
+            val scene = compose.onNodeWithTag("entry-scene").assertIsDisplayed()
+            val viewport = compose.onNodeWithTag("viewport").getUnclippedBoundsInRoot()
+            val bounds = scene.getUnclippedBoundsInRoot()
+            assertEquals(viewport.left.value, bounds.left.value, 1f)
+            assertEquals(viewport.right.value, bounds.right.value, 1f)
+            // At 0.5 density, rounding can extend the scene by one physical pixel.
+            assertEquals("Road must extend to the bottom", viewport.bottom.value, bounds.bottom.value, 2f)
+            val video = compose.onNodeWithTag("entry-video").getUnclippedBoundsInRoot()
+            val start = compose.onNodeWithText("시작하기").getUnclippedBoundsInRoot()
+            assertEquals("Video must preserve its cropped aspect ratio", 728f / 1668f,
+                (video.bottom - video.top).value / (video.right - video.left).value, 0.01f)
+            // Every character in the cropped clip stays within its upper half.
+            assertTrue("Start button must sit below the characters", start.top >= video.top + (video.bottom - video.top) / 2)
+            val pixels = scene.captureToImage().toPixelMap()
+            for (x in listOf(1, pixels.width / 2, pixels.width - 2)) {
+                val color = pixels[x, pixels.height - 2]
+                assertTrue("Bottom must remain the pastel road, not empty space: $color", color.red > 0.8f && color.blue > 0.8f && color.green < 0.94f)
+            }
+            assertButtonsFit()
+        }
     }
 
     private fun assertButtonsFit() {
