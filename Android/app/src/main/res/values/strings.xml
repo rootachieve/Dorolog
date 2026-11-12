@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">Dorolog</string>
+    <string name="start">시작하기</string>
+    <string name="archive">이야기 보관함</string>
+    <string name="brand">도로록: DoRo Log</string>
+    <string name="back">뒤로가기</string>
 </resources>
