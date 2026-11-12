@@ -15,4 +15,13 @@
     <string name="retry">다시 시도</string>
     <string name="departure_countdown">%1$d초 뒤 대화를 시작해요</string>
     <string name="motion_unavailable">출발 감지를 사용할 수 없어요.</string>
+    <string name="pause_conversation">대화 일시정지</string>
+    <string name="conversation_paused">일시정지</string>
+    <string name="resume_conversation">재개</string>
+    <string name="finish_conversation">종료하기</string>
+    <string name="audio_waiting">안내가 끝나면 대화를 이어갈게요</string>
+    <string name="destination_arrived">목적지 도착</string>
+    <string name="arrival_message">목적지에 도착해 대화를 마쳤어요</string>
+    <string name="arrival_without_server">대화 서버 연결 후 이야기 요약을 확인할 수 있어요</string>
+    <string name="confirm">확인</string>
 </resources>
