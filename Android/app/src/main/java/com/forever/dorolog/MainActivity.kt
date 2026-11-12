@@ -25,6 +25,7 @@ class MainActivity : ComponentActivity() {
     private var systemAnimationsEnabled by mutableStateOf(false)
     private var carAllowsAnimation by mutableStateOf(false)
     private var car: Car? = null
+    private var connectedCar by mutableStateOf<Car?>(null)
     private var restrictionsManager: CarUxRestrictionsManager? = null
     private val animationScaleObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) {
@@ -38,6 +39,8 @@ class MainActivity : ComponentActivity() {
             DorologApp(
                 onBackground = { moveTaskToBack(true) },
                 animationsEnabled = resumed && systemAnimationsEnabled && carAllowsAnimation,
+                transitionAnimationsEnabled = resumed && systemAnimationsEnabled,
+                car = connectedCar,
             )
         }
         connectCar()
@@ -65,6 +68,7 @@ class MainActivity : ComponentActivity() {
         try {
             car = Car.createCar(this, null, Car.CAR_WAIT_TIMEOUT_DO_NOT_WAIT) { connectedCar, ready ->
                 carAllowsAnimation = false
+                this.connectedCar = if (ready && !isDestroyed) connectedCar else null
                 restrictionsManager = null
                 if (!ready || isDestroyed) return@createCar
                 try {
@@ -100,13 +104,15 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { Main, Home, Archive }
+private enum class Screen { Main, Departure, Archive }
 
 @Composable
 internal fun DorologApp(
     onBackground: () -> Unit,
     modifier: Modifier = Modifier,
     animationsEnabled: Boolean = true,
+    car: Car? = null,
+    transitionAnimationsEnabled: Boolean = animationsEnabled,
 ) {
     var screen by rememberSaveable { mutableStateOf(Screen.Main) }
     BackHandler {
@@ -114,12 +120,12 @@ internal fun DorologApp(
     }
     when (screen) {
         Screen.Main -> MainScreen(
-            onStart = { screen = Screen.Home },
+            onStart = { screen = Screen.Departure },
             onArchive = { screen = Screen.Archive },
             modifier = modifier,
             animationsEnabled = animationsEnabled,
         )
-        Screen.Home -> HomeScreen(onBack = { screen = Screen.Main }, modifier = modifier)
+        Screen.Departure -> DepartureRoute(onBack = { screen = Screen.Main }, modifier = modifier, animationsEnabled = transitionAnimationsEnabled, car = car)
         Screen.Archive -> ArchiveScreen(onBack = { screen = Screen.Main }, modifier = modifier)
     }
 }

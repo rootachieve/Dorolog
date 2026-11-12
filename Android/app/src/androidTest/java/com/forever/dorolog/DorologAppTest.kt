@@ -93,7 +93,7 @@ class DorologAppTest {
         compose.mainClock.advanceTimeBy(500)
 
         compose.runOnIdle { assertEquals(0, backgrounds.get()) }
-        compose.onNodeWithTag("home-screen").assertIsDisplayed()
+        compose.onNodeWithTag("departure-screen").assertIsDisplayed()
     }
 
     private fun setAppContent(onBackground: () -> Unit = {}) {
@@ -115,9 +115,9 @@ class DorologAppTest {
     private fun assertMainReady() {
         compose.onNodeWithText("시작하기").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithText("이야기 보관함").assertIsDisplayed().assertIsEnabled()
-        compose.onNodeWithTag("home-screen").assertDoesNotExist()
+        compose.onNodeWithTag("departure-screen").assertDoesNotExist()
         compose.onNodeWithTag("archive-screen").assertDoesNotExist()
     }
 
-    private val destinations = listOf("시작하기" to "home-screen", "이야기 보관함" to "archive-screen")
+    private val destinations = listOf("시작하기" to "departure-screen", "이야기 보관함" to "archive-screen")
 }

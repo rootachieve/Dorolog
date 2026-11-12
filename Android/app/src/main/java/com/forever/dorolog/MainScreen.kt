@@ -101,7 +101,7 @@ fun MainScreen(
         white.animateTo(1f, tween(450, easing = FastOutSlowInEasing))
         if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return@LaunchedEffect
         dispatched = true
-        if (destination == "home") currentStart() else currentArchive()
+        if (destination == "departure") currentStart() else currentArchive()
     }
     BackHandler(enabled = destination != null && !dispatched) {}
 
@@ -171,7 +171,7 @@ fun MainScreen(
             enabled = destination == null,
             textStyle = startStyle,
             modifier = Modifier.offset((maxWidth - startWidth) / 2, startTop).size(startWidth, startHeight),
-            onClick = { if (destination == null) destination = "home" },
+            onClick = { if (destination == null) destination = "departure" },
         )
         MainAction(
             text = archiveText,
