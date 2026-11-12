@@ -1,14 +1,14 @@
 from time import perf_counter
 
 from .llm import (
-    create_first_question,
     create_followup_question,
     organize_conversation,
     recommend_topics,
 )
 
 
-destination = input("목적지: ").strip()
+destination_input = input("목적지 (없으면 Enter): ").strip()
+destination = destination_input or None
 
 started_at = perf_counter()
 topic_result = recommend_topics(destination)
@@ -16,22 +16,18 @@ topic_elapsed = perf_counter() - started_at
 
 print(f"\n추천 주제 ({topic_elapsed:.2f}초)")
 for number, topic in enumerate(topic_result.topics, start=1):
-    print(f"{number}. {topic}")
+    print(f"{number}. {topic.question}")
 
-selected_number = int(input("\n주제 선택 (1 또는 2): "))
-selected_topic = topic_result.topics[selected_number - 1]
+selected_number = int(input("\n질문 선택 (1~4): "))
+selected_question = topic_result.topics[selected_number - 1].question
 
-started_at = perf_counter()
-question_result = create_first_question(destination, selected_topic)
-question_elapsed = perf_counter() - started_at
-
-print(f"\n첫 질문 ({question_elapsed:.2f}초)")
-print(question_result.question)
+print("\n첫 질문")
+print(selected_question)
 
 recent_conversation = input("\n최근 대화: ").strip()
 
 started_at = perf_counter()
-followup_result = create_followup_question(selected_topic, recent_conversation)
+followup_result = create_followup_question(selected_question, recent_conversation)
 followup_elapsed = perf_counter() - started_at
 
 if followup_result.should_suggest:

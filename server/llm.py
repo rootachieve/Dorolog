@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -7,6 +8,8 @@ from .schemas import (
     ConversationSummary,
     FirstQuestion,
     FollowupSuggestion,
+    RecommendedTopic,
+    TopicQuestions,
     TopicRecommendations,
 )
 
@@ -17,8 +20,9 @@ client = OpenAI()
 MODEL = os.getenv("OPENAI_MODEL", "gpt-6.1-sol")
 
 
-def recommend_topics(destination: str) -> TopicRecommendations:
-    """목적지를 받아 가족이 차 안에서 이야기할 주제 2개를 만든다."""
+def recommend_topics(destination: Optional[str]) -> TopicRecommendations:
+    """목적지 질문 2개와 가족 여행 질문 2개를 만든다."""
+    destination_text = destination.strip() if destination else "없음"
     response = client.responses.parse(
         model=MODEL,
         input=[
@@ -26,20 +30,34 @@ def recommend_topics(destination: str) -> TopicRecommendations:
                 "role": "system",
                 "content": (
                     "당신은 가족의 차량 이동 중 대화를 돕는 진행자입니다. "
-                    "목적지를 반영한 서로 다른 가족 대화 주제 2개를 제안하세요. "
-                    "첫 주제는 기대나 계획, 둘째 주제는 추억이나 경험을 다루세요. "
-                    "질문형이 아닌 짧은 제목으로 작성하고 마침표로 끝내세요. "
+                    "가족 모두가 답할 수 있는 서로 다른 질문을 정확히 4개 만드세요. "
+                    "1번과 2번은 입력된 목적지에서 기대하는 활동, 음식이나 경험을 물으세요. "
+                    "목적지가 없으면 특정 장소를 지어내지 말고 이번 이동 중 함께 하고 싶은 일이나 기대를 물으세요. "
+                    "3번과 4번은 특정 목적지와 관계없는 가족 여행의 추억이나 경험을 물으세요. "
+                    "예나 아니오로 끝나거나 운전자를 지목하는 질문은 피하고, "
+                    "각 질문을 한 문장으로 작성해 물음표로 끝내세요."
                 ),
             },
             {
                 "role": "user",
-                "content": f"목적지: {destination}",
+                "content": f"목적지: {destination_text}",
             },
         ],
-        text_format=TopicRecommendations,
+        text_format=TopicQuestions,
     )
 
-    return response.output_parsed
+    topic_ids = (
+        "destination_1",
+        "destination_2",
+        "family_travel_1",
+        "family_travel_2",
+    )
+    topics = [
+        RecommendedTopic(id=topic_id, question=question)
+        for topic_id, question in zip(topic_ids, response.output_parsed.questions)
+    ]
+
+    return TopicRecommendations(topics=topics)
 
 
 def create_first_question(destination: str, topic: str) -> FirstQuestion:

@@ -16,7 +16,7 @@ AI 기능은 Python 함수로 구현했고, 앱에서는 FastAPI를 통해 JSON�
 
 ## 구현 완료
 
-- 목적지를 반영한 대화 주제 2개 추천 (`recommend_topics()`)
+- 목적지 관련 질문 2개와 가족 여행 질문 2개 추천 (`recommend_topics()`)
 - 선택한 주제로 첫 질문 생성 (`create_first_question()`)
 - 최근 대화를 반영한 후속 질문 생성 또는 제안 없음 반환 (`create_followup_question()`)
 - 대화를 이야기별로 구분 (`organize_conversation()`)
@@ -34,7 +34,7 @@ AI 기능은 Python 함수로 구현했고, 앱에서는 FastAPI를 통해 JSON�
 | Method | Endpoint | 호출 함수 | 결과 |
 | --- | --- | --- | --- |
 | GET | `/health` | `health()` | 서버 실행 상태 |
-| POST | `/topics` | `recommend_topics()` | 추천 주제 2개 |
+| POST | `/topics` | `recommend_topics()` | 추천 질문 4개 |
 | POST | `/questions/first` | `create_first_question()` | 첫 질문 1개 |
 | POST | `/questions/follow-up` | `create_followup_question()` | 후속 질문 1개 또는 제안 없음 |
 | POST | `/recordings` | `start_recording()` | 기록 ID와 새 여정 기록 |

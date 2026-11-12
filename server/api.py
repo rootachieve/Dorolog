@@ -47,7 +47,7 @@ def health():
 
 @app.post("/topics", response_model=TopicRecommendations)
 def topics(request: TopicRequest):
-    return recommend_topics(request.destination)
+    return recommend_topics(request.destination_name)
 
 
 @app.post("/questions/first", response_model=FirstQuestion)

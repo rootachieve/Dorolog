@@ -1,8 +1,14 @@
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
 class TopicRequest(BaseModel):
-    destination: str
+    destination_name: Optional[str] = Field(default=None, alias="destinationName")
+    previous_conversation_ids: list[str] = Field(
+        default_factory=list,
+        alias="previousConversationIds",
+    )
 
 
 class FirstQuestionRequest(BaseModel):
@@ -25,11 +31,24 @@ class TranscriptRequest(BaseModel):
     text: str
 
 
+class TopicQuestions(BaseModel):
+    questions: list[str] = Field(
+        min_length=4,
+        max_length=4,
+        description="목적지 관련 질문 2개와 가족 여행 관련 질문 2개",
+    )
+
+
+class RecommendedTopic(BaseModel):
+    id: str
+    question: str
+
+
 class TopicRecommendations(BaseModel):
-    topics: list[str] = Field(
-        min_length=2,
-        max_length=2,
-        description="목적지와 여행 맥락을 반영하고 마침표로 끝나는 가족 대화 제목 2개",
+    topics: list[RecommendedTopic] = Field(
+        min_length=4,
+        max_length=4,
+        description="Android 추천 질문 화면에 전달할 질문 4개",
     )
 
 
