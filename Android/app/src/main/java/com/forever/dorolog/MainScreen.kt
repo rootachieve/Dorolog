@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -168,12 +169,14 @@ fun MainScreen(
             Artwork(
                 R.drawable.main_archive_folder,
                 Modifier.align(Alignment.TopCenter).offset(y = (10 * archiveScale).dp)
-                    .size((114 * archiveScale).dp, (100 * archiveScale).dp),
+                    .size((114 * archiveScale).dp, (100 * archiveScale).dp)
+                    .graphicsLayer { blendMode = BlendMode.Multiply },
             )
             Artwork(
                 R.drawable.main_archive_label,
                 Modifier.align(Alignment.TopCenter).offset(y = (117 * archiveScale + 10 * archiveLabelScale).dp)
-                    .size((121 * archiveLabelScale).dp, (25 * archiveLabelScale).dp).testTag("archive-label"),
+                    .size((121 * archiveLabelScale).dp, (25 * archiveLabelScale).dp)
+                    .graphicsLayer { blendMode = BlendMode.Multiply }.testTag("archive-label"),
             )
         }
         Box(
