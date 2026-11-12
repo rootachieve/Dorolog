@@ -418,17 +418,19 @@ private fun ConversationWave(scale: Float, progress: Float, modifier: Modifier) 
 private fun LiveConversationWave(amplitudes: List<Int>, scale: Float, modifier: Modifier) {
     val density = LocalDensity.current.density
     val color = Color(0xFF7E7BFF)
+    val peak = (amplitudes.maxOrNull() ?: 0).coerceIn(0, 100) / 100f
+    val heightGain = 1f + 4f * peak * peak
     val spikes = remember(amplitudes, density) {
         amplitudes.map { (it.coerceIn(0, 100) / 100f * 48f * density).toInt() }
     }
     Box(modifier, contentAlignment = Alignment.Center) {
         Box(Modifier.fillMaxWidth().height((8 * scale).dp).clip(RoundedCornerShape(41.dp)).background(color))
-        // The library uses a 48dp canvas; scale its drawing to the Figma waveform height.
+        // Per-window normalization hides loudness differences, so amplify loud input vertically.
         AudioWaveform(amplitudes = spikes, waveformBrush = SolidColor(color), progress = 0f,
             spikeWidth = (7 * scale).dp, spikePadding = (8 * scale).dp, spikeRadius = (4 * scale).dp,
             spikeAnimationSpec = snap(), onProgressChange = {},
             modifier = Modifier.fillMaxWidth().height(48.dp).clearAndSetSemantics {}
-                .graphicsLayer { scaleY = 134 * scale / 48 })
+                .graphicsLayer { scaleY = 134 * scale / 48 * heightGain })
     }
 }
 
