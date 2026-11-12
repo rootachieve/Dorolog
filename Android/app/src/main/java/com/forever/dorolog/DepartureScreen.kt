@@ -1,6 +1,7 @@
 package com.forever.dorolog
 
 import android.car.Car
+import android.Manifest
 import android.app.UiModeManager
 import android.content.pm.PackageManager
 import android.os.Build
@@ -10,10 +11,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.snap
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -22,15 +25,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
@@ -41,6 +47,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -60,6 +68,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
+import com.linc.audiowaveform.AudioWaveform
 
 private val QuestionFont = FontFamily(Font(R.font.ownglyph_yuntaeng))
 private val DepartureFont = FontFamily(
@@ -80,27 +89,56 @@ internal fun DepartureRoute(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val context = LocalContext.current
-    val source = remember(viewModel) {
-        DepartureVehicleSource(context.applicationContext, viewModel::onNavigationChanged, viewModel::onSpeedChanged)
+    val drivingViewModel: DrivingViewModel = viewModel(factory = viewModelFactory {
+        initializer { DrivingViewModel(DrivingAudioSession(context.applicationContext), createSavedStateHandle()) }
+    })
+    val drivingState by drivingViewModel.uiState.collectAsStateWithLifecycle()
+    val source = remember(viewModel, drivingViewModel) {
+        DepartureVehicleSource(context.applicationContext, viewModel::onNavigationChanged,
+            viewModel::onSpeedChanged, onArrived = { destination ->
+                if (viewModel.uiState.value.phase == DepartureViewModel.Phase.Talk ||
+                    viewModel.uiState.value.phase == DepartureViewModel.Phase.Morphing) {
+                    drivingViewModel.finish()
+                    viewModel.onDestinationArrived(destination)
+                }
+            }, onSafety = drivingViewModel::onSafetyChanged)
     }
-    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        if (lifecycle.currentState == Lifecycle.State.RESUMED && viewModel.uiState.value.phase == DepartureViewModel.Phase.Ready) {
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        if (lifecycle.currentState == Lifecycle.State.RESUMED) {
             source.start(car)
         }
     }
+    var permissionsRequested by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(car, uiState.phase) {
-        if (uiState.phase == DepartureViewModel.Phase.Ready && car != null &&
-            context.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE) &&
-            context.checkSelfPermission(Car.PERMISSION_SPEED) != PackageManager.PERMISSION_GRANTED) {
-            permission.launch(Car.PERMISSION_SPEED)
+        if (!permissionsRequested && uiState.phase == DepartureViewModel.Phase.Ready) {
+            permissionsRequested = true
+            val permissions = buildList {
+                add(Manifest.permission.RECORD_AUDIO)
+                add(Manifest.permission.READ_PHONE_STATE)
+                if (context.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
+                    add(Car.PERMISSION_SPEED)
+                    add("pleos.car.permission.CAR_SAFETY")
+                    add("pleos.car.permission.CAR_DOORS")
+                }
+            }.filter { context.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+            if (permissions.isNotEmpty()) permission.launch(permissions.toTypedArray())
         }
     }
-    LifecycleResumeEffect(uiState.phase, car, source) {
-        if (uiState.phase == DepartureViewModel.Phase.Ready) {
-            viewModel.setActive(true)
-            source.start(car)
+    LifecycleResumeEffect(car, source) {
+        viewModel.setActive(true)
+        drivingViewModel.setForeground(true)
+        source.start(car)
+        onPauseOrDispose { viewModel.setActive(false); drivingViewModel.setForeground(false) }
+    }
+    DisposableEffect(source) {
+        onDispose { source.stop(); drivingViewModel.setForeground(false) }
+    }
+    LaunchedEffect(uiState.phase) {
+        if (uiState.phase == DepartureViewModel.Phase.Talk) {
+            uiState.topics.firstOrNull { it.id == uiState.selectedTopicId }?.let {
+                drivingViewModel.start(it, uiState.destination)
+            }
         }
-        onPauseOrDispose { viewModel.setActive(false); source.stop() }
     }
     val morph = remember { Animatable(if (uiState.phase == DepartureViewModel.Phase.Talk) 1f else 0f) }
     LaunchedEffect(uiState.phase, lifecycle, animationsEnabled) {
@@ -116,13 +154,17 @@ internal fun DepartureRoute(
     val back = {
         when (uiState.phase) {
             DepartureViewModel.Phase.Ready -> { viewModel.leave(); onBack() }
-            DepartureViewModel.Phase.Talk -> viewModel.backFromTalk()
+            DepartureViewModel.Phase.Talk -> drivingViewModel.pause()
             DepartureViewModel.Phase.Morphing -> Unit
+            DepartureViewModel.Phase.Arrived -> { viewModel.leave(); onBack() }
         }
     }
     BackHandler(onBack = back)
-    if (uiState.phase == DepartureViewModel.Phase.Talk) {
-        TalkScreen(uiState, onBack = back, onRetry = viewModel::retry, modifier = modifier)
+    if (uiState.phase == DepartureViewModel.Phase.Arrived) {
+        ArrivalScreen(uiState.destination, back, modifier)
+    } else if (uiState.phase == DepartureViewModel.Phase.Talk) {
+        TalkScreen(uiState, drivingState, drivingViewModel::pause, drivingViewModel::resume,
+            onFinish = { drivingViewModel.finish(); viewModel.leave(); onBack() }, modifier = modifier)
     } else {
         DepartureScreen(uiState = uiState, onBack = back, onSelectTopic = viewModel::selectTopic,
             onPrevious = { viewModel.moveTopic(-1) }, onNext = { viewModel.moveTopic(1) },
@@ -142,6 +184,7 @@ fun DepartureScreen(
     modifier: Modifier = Modifier,
     morphProgress: Float = if (uiState.phase == DepartureViewModel.Phase.Ready) 0f else 1f,
     animationsEnabled: Boolean = true,
+    amplitudes: List<Int>? = null,
 ) {
     val progress = morphProgress.coerceIn(0f, 1f)
     val highContrast = rememberHighContrast()
@@ -155,7 +198,7 @@ fun DepartureScreen(
             1f to Color.White.copy(alpha = 0.63f),
         ))
         .border(1.dp, Color(0x33131417), RoundedCornerShape(40.dp))
-        .testTag(if (uiState.phase == DepartureViewModel.Phase.Talk) "talk-screen" else "departure-screen")) {
+        .testTag(if (uiState.phase == DepartureViewModel.Phase.Talk) "conversation-content" else "departure-screen")) {
         val width = maxWidth
         val height = maxHeight
         val scale = minOf(width.value / 1700f, height.value / 1184f)
@@ -181,7 +224,14 @@ fun DepartureScreen(
         QuestionCharacter(progress, scale, Modifier.fillMaxSize().testTag("topic-character"))
 
         if (progress > 0f && uiState.topics.isNotEmpty()) {
-            ConversationWave(scale, progress, Modifier.fillMaxSize().testTag("conversation-wave"))
+            if (amplitudes == null) {
+                ConversationWave(scale, progress, Modifier.fillMaxSize().testTag("conversation-wave"))
+            } else {
+                LiveConversationWave(amplitudes, scale, Modifier.align(Alignment.TopCenter)
+                    .offset(y = height * (631f / 1184f) - (67 * scale).dp)
+                    .width((812 * scale).dp).height((134 * scale).dp)
+                    .testTag("conversation-wave"))
+            }
         }
 
         Column(Modifier.fillMaxWidth()
@@ -204,10 +254,12 @@ fun DepartureScreen(
                     RecommendationHint(uiState, scale, highContrast, Modifier.weight(3f).graphicsLayer { alpha = 1f - progress })
                     Spacer(Modifier.weight(1f))
                 }
-                TextButton(onClick = onBack, enabled = uiState.phase != DepartureViewModel.Phase.Morphing,
-                    modifier = Modifier.heightIn(min = 48.dp)) {
-                    Text(stringResource(R.string.back), color = ink,
-                        fontFamily = DepartureFont, fontSize = (22 * scale).coerceAtLeast(18f).sp)
+                if (uiState.phase != DepartureViewModel.Phase.Talk) {
+                    TextButton(onClick = onBack, enabled = uiState.phase != DepartureViewModel.Phase.Morphing,
+                        modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text(stringResource(R.string.back), color = ink,
+                            fontFamily = DepartureFont, fontSize = (22 * scale).coerceAtLeast(18f).sp)
+                    }
                 }
             }
             if (width < 700.dp && uiState.phase != DepartureViewModel.Phase.Talk) {
@@ -363,8 +415,117 @@ private fun ConversationWave(scale: Float, progress: Float, modifier: Modifier) 
 }
 
 @Composable
-fun TalkScreen(uiState: DepartureViewModel.UiState, onBack: () -> Unit, onRetry: () -> Unit, modifier: Modifier = Modifier) {
-    DepartureScreen(uiState, onBack, {}, {}, {}, onRetry, modifier, morphProgress = 1f, animationsEnabled = false)
+private fun LiveConversationWave(amplitudes: List<Int>, scale: Float, modifier: Modifier) {
+    val density = LocalDensity.current.density
+    val color = Color(0xFF7E7BFF)
+    val spikes = remember(amplitudes, density) {
+        amplitudes.map { (it.coerceIn(0, 100) / 100f * 48f * density).toInt() }
+    }
+    Box(modifier, contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxWidth().height((8 * scale).dp).clip(RoundedCornerShape(41.dp)).background(color))
+        // The library uses a 48dp canvas; scale its drawing to the Figma waveform height.
+        AudioWaveform(amplitudes = spikes, waveformBrush = SolidColor(color), progress = 0f,
+            spikeWidth = (7 * scale).dp, spikePadding = (8 * scale).dp, spikeRadius = (4 * scale).dp,
+            spikeAnimationSpec = snap(), onProgressChange = {},
+            modifier = Modifier.fillMaxWidth().height(48.dp).clearAndSetSemantics {}
+                .graphicsLayer { scaleY = 134 * scale / 48 })
+    }
+}
+
+@Composable
+internal fun TalkScreen(
+    uiState: DepartureViewModel.UiState,
+    drivingState: DrivingViewModel.UiState,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
+    onFinish: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val display = uiState.copy(topics = listOf(RecommendedTopic("current", drivingState.question)),
+        selectedTopicId = "current", loading = false, contentError = false)
+    BoxWithConstraints(modifier.fillMaxSize().clip(RoundedCornerShape(40.dp)).testTag("talk-screen")) {
+        val scale = minOf(maxWidth.value / 1700f, maxHeight.value / 1184f)
+        DepartureScreen(display, {}, {}, {}, {}, {},
+            Modifier.fillMaxSize().then(if (drivingState.paused) {
+                Modifier.blur((5.35f * scale).dp).clearAndSetSemantics {}
+            } else Modifier),
+            morphProgress = 1f, animationsEnabled = false, amplitudes = drivingState.amplitudes)
+        if (drivingState.paused) {
+            Box(Modifier.fillMaxSize().background(
+                if (drivingState.resumeEnabled) Color(0x91181641) else Color(0x9168678D)))
+            Column(Modifier.align(Alignment.TopCenter).offset(y = maxHeight * (351f / 1184f))
+                .widthIn(min = 144.dp).clip(RoundedCornerShape(20.dp))
+                .clickable(enabled = drivingState.resumeEnabled, role = Role.Button,
+                    onClickLabel = stringResource(R.string.resume_conversation), onClick = onResume)
+                .testTag("resume-conversation")
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                if (drivingState.resumeEnabled) {
+                    Image(painterResource(R.drawable.driving_resume), contentDescription = null,
+                        modifier = Modifier.size((251 * scale).dp, (269 * scale).dp))
+                } else {
+                    Row(Modifier.size((232 * scale).dp, (269 * scale).dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        repeat(2) { Box(Modifier.fillMaxHeight().width((57 * scale).dp)
+                            .clip(RoundedCornerShape(94.dp)).background(Color(0xFFF9FBFE))) }
+                    }
+                }
+                Spacer(Modifier.height((70 * scale).dp.coerceAtLeast(16.dp)))
+                Text(stringResource(if (drivingState.resumeEnabled) R.string.resume_conversation else R.string.conversation_paused),
+                    color = Color.White, fontFamily = DepartureFont, fontWeight = FontWeight.SemiBold,
+                    fontSize = (64 * scale).coerceAtLeast(24f).sp)
+            }
+            Button(onClick = onFinish, colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.2f)),
+                border = androidx.compose.foundation.BorderStroke((5 * scale).dp, Color.White.copy(alpha = 0.4f)),
+                shape = RoundedCornerShape(66.dp),
+                modifier = Modifier.align(Alignment.BottomCenter).offset(y = -(109 * scale).dp)
+                    .widthIn(min = (276 * scale).dp.coerceAtLeast(144.dp))
+                    .heightIn(min = 48.dp).testTag("finish-conversation"),
+                contentPadding = PaddingValues(horizontal = (24 * scale).dp, vertical = (16 * scale).dp)) {
+                Image(painterResource(R.drawable.driving_close), contentDescription = null,
+                    modifier = Modifier.size((49 * scale).dp.coerceAtLeast(20.dp)))
+                Text(stringResource(R.string.finish_conversation), color = Color.White,
+                    fontFamily = DepartureFont, fontWeight = FontWeight.SemiBold,
+                    fontSize = (40 * scale).coerceAtLeast(20f).sp)
+            }
+        } else {
+            Box(Modifier.align(Alignment.Center).fillMaxWidth().fillMaxHeight(0.72f)
+                .clickable(role = Role.Button, onClickLabel = stringResource(R.string.pause_conversation), onClick = onPause)
+                .testTag("pause-conversation"))
+        }
+        val status = drivingState.status ?: if (drivingState.waitingForAudio) stringResource(R.string.audio_waiting) else null
+        status?.let {
+            val bottom = if (drivingState.paused) {
+                (109 * scale).dp + (102 * scale).dp.coerceAtLeast(48.dp) + 16.dp
+            } else 16.dp
+            Text(it, color = if (drivingState.paused) Color.White else Color(0xFF575760),
+                fontFamily = DepartureFont, textAlign = TextAlign.Center, fontSize = 16.sp,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(start = 24.dp, end = 24.dp, bottom = bottom)
+                    .testTag("driving-status"))
+        }
+    }
+}
+
+@Composable
+internal fun ArrivalScreen(destination: Destination?, onConfirm: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxSize().clip(RoundedCornerShape(40.dp)).background(Color(0xFFF7F8FD))
+        .border(1.dp, Color(0x33131417), RoundedCornerShape(40.dp)).padding(32.dp).testTag("arrival-screen"),
+        horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(stringResource(R.string.destination_arrived), color = Color.White, fontFamily = DepartureFont,
+            modifier = Modifier.align(Alignment.Start).clip(RoundedCornerShape(66.dp))
+                .background(Color(0xFF7C79FF)).padding(horizontal = 20.dp, vertical = 12.dp))
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Text(destination?.name.orEmpty(), fontFamily = QuestionFont, fontSize = 48.sp, textAlign = TextAlign.Center)
+            Text(stringResource(R.string.arrival_message), fontFamily = DepartureFont, fontSize = 24.sp,
+                textAlign = TextAlign.Center, modifier = Modifier.padding(16.dp))
+            Text(stringResource(R.string.arrival_without_server), fontFamily = DepartureFont, fontSize = 16.sp,
+                color = Color(0xFF575760), textAlign = TextAlign.Center)
+        }
+        Button(onClick = onConfirm, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5A46FA)),
+            contentPadding = PaddingValues(horizontal = 40.dp, vertical = 12.dp), modifier = Modifier.heightIn(min = 48.dp)) {
+            Text(stringResource(R.string.confirm), fontFamily = DepartureFont, fontSize = 24.sp)
+        }
+    }
 }
 
 @Preview(name = "추천 질문", widthDp = 850, heightDp = 592)
@@ -381,5 +542,6 @@ private fun DeparturePreview() {
 private fun TalkPreview() {
     val topics = sampleDepartureResponse.toModel()
     TalkScreen(DepartureViewModel.UiState(topics = topics, selectedTopicId = topics.first().id,
-        loading = false, phase = DepartureViewModel.Phase.Talk), {}, {})
+        loading = false, phase = DepartureViewModel.Phase.Talk),
+        DrivingViewModel.UiState(question = topics.first().question), {}, {}, {})
 }

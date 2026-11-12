@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.LocalDensity
@@ -72,7 +73,7 @@ class DepartureScreenTest {
         }
     }
 
-    @Test fun morphInterpolatesBackground_thenShowsConversation_andBackRestoresRecommendations() {
+    @Test fun morphInterpolatesBackground_thenDrivingHidesBack_andPhysicalBackPauses() {
         lateinit var vm: DepartureViewModel
         lateinit var back: androidx.activity.OnBackPressedDispatcher
         compose.runOnUiThread { vm = DepartureViewModel(savedStateHandle = SavedStateHandle(mapOf("phase" to "Morphing"))) }
@@ -93,11 +94,11 @@ class DepartureScreenTest {
         compose.onNodeWithTag("talk-screen").assertDoesNotExist()
         compose.mainClock.advanceTimeBy(500)
         compose.onNodeWithTag("talk-screen").assertIsDisplayed()
-        compose.onNodeWithText("주행 중").assertIsDisplayed()
-        compose.onNodeWithTag("conversation-wave").assertIsDisplayed()
-        val after = backgroundRed("talk-screen")
-        assertTrue(middle > before + 0.02f && middle < after - 0.02f)
-        compose.onNodeWithText("뒤로가기").performClick()
+        assertTrue(middle > before + 0.02f && middle < 1f)
+        compose.onNodeWithText("뒤로가기").assertDoesNotExist()
+        compose.runOnUiThread { back.onBackPressed() }
+        compose.mainClock.advanceTimeByFrame()
+        compose.onNodeWithTag("finish-conversation").assertIsDisplayed().performClick()
         compose.mainClock.advanceTimeBy(800)
         compose.onNodeWithTag("departure-screen").assertIsDisplayed()
         compose.onNodeWithText("출발 전").assertIsDisplayed()
@@ -137,5 +138,39 @@ class DepartureScreenTest {
         compose.onNodeWithTag("departure-screen").assertIsDisplayed()
         assertNull(vm.uiState.value.countdownSeconds)
         compose.runOnUiThread { owner.lifecycle.currentState = Lifecycle.State.DESTROYED }
+    }
+
+    @Test fun drivingControls_onlyOfferFinishWhilePaused_andBlockUnsafeResume() {
+        val topics = sampleDepartureResponse.toModel()
+        val departure = DepartureViewModel.UiState(topics = topics, selectedTopicId = topics.first().id,
+            loading = false, phase = DepartureViewModel.Phase.Talk)
+        var state by androidx.compose.runtime.mutableStateOf(DrivingViewModel.UiState(
+            question = topics.first().question, paused = false))
+        var pauses = 0
+        var resumes = 0
+        compose.setContent { TalkScreen(departure, state, { pauses++ }, { resumes++ }, {}) }
+        compose.onNodeWithText("주행 중").assertIsDisplayed()
+        compose.onNodeWithTag("conversation-wave").assertIsDisplayed()
+        compose.onNodeWithText("뒤로가기").assertDoesNotExist()
+        compose.onNodeWithText("종료하기").assertDoesNotExist()
+        compose.onNodeWithTag("pause-conversation").performClick()
+        compose.runOnIdle {
+            assertEquals(1, pauses)
+            state = state.copy(paused = true, resumeEnabled = false, status = "통화 중")
+        }
+        compose.onNodeWithTag("resume-conversation").assertIsNotEnabled()
+        compose.onNodeWithTag("finish-conversation").assertIsDisplayed()
+        compose.runOnIdle { state = state.copy(resumeEnabled = true, status = null) }
+        compose.onNodeWithTag("resume-conversation").assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(1, resumes) }
+    }
+
+    @Test fun arrivalShowsActualDestination_withoutInventedSavedStories() {
+        compose.setContent { ArrivalScreen(Destination("부산 할머니댁"), {}) }
+        compose.onNodeWithTag("arrival-screen").assertIsDisplayed()
+        compose.onNodeWithText("목적지 도착").assertIsDisplayed()
+        compose.onNodeWithText("부산 할머니댁").assertIsDisplayed()
+        compose.onNodeWithText("확인").assertIsDisplayed()
+        compose.onNodeWithText("5개의 이야기를 저장했어요", substring = true).assertDoesNotExist()
     }
 }

@@ -18,7 +18,7 @@ class DepartureViewModel(
     private val savedStateHandle: SavedStateHandle = SavedStateHandle(),
     private val previousConversationIds: List<String> = emptyList(),
 ) : ViewModel() {
-    enum class Phase { Ready, Morphing, Talk }
+    enum class Phase { Ready, Morphing, Talk, Arrived }
 
     data class UiState(
         val topics: List<RecommendedTopic> = emptyList(),
@@ -132,6 +132,16 @@ class DepartureViewModel(
 
     fun onMorphFinished() {
         if (uiState.value.phase == Phase.Morphing) setPhase(Phase.Talk)
+    }
+
+    fun onDestinationArrived(destination: Destination? = null) {
+        if (uiState.value.phase != Phase.Talk && uiState.value.phase != Phase.Morphing) return
+        cancelCountdown()
+        destination?.let {
+            savedStateHandle["destinationName"] = it.name
+            _uiState.update { state -> state.copy(destination = it) }
+        }
+        setPhase(Phase.Arrived)
     }
 
     fun backFromTalk() {

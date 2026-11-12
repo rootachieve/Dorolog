@@ -210,4 +210,21 @@ class DepartureViewModelTest {
         assertNull(requests.last().destinationName)
         assertEquals(3, requests.size)
     }
+
+    @Test fun onlyExplicitArrival_finishesDrive_evenInBackground_andSurvivesRestore() = runTest(dispatcher) {
+        val saved = SavedStateHandle()
+        val vm = DepartureViewModel(savedStateHandle = saved)
+        runCurrent()
+        vm.onDestinationArrived()
+        assertEquals(DepartureViewModel.Phase.Ready, vm.uiState.value.phase)
+        vm.setActive(true); vm.onSpeedChanged(1f)
+        advanceTimeBy(5_000); runCurrent(); vm.onMorphFinished()
+        vm.onNavigationChanged(null, true)
+        assertEquals(DepartureViewModel.Phase.Talk, vm.uiState.value.phase)
+        vm.setActive(false); vm.onDestinationArrived(Destination("변경된 목적지"))
+        assertEquals(DepartureViewModel.Phase.Arrived, vm.uiState.value.phase)
+        val restored = DepartureViewModel(savedStateHandle = saved)
+        assertEquals(DepartureViewModel.Phase.Arrived, restored.uiState.value.phase)
+        assertEquals("변경된 목적지", restored.uiState.value.destination?.name)
+    }
 }
