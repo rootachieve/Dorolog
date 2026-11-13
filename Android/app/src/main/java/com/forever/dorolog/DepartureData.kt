@@ -1,19 +1,27 @@
 package com.forever.dorolog
 
 import com.google.gson.annotations.SerializedName
+import com.google.gson.GsonBuilder
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.POST
+import retrofit2.http.Path
 import retrofit2.http.Url
 
 data class RecommendedTopic(val id: String, val question: String)
-data class Destination(val name: String)
+data class Destination(
+    val name: String,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val address: String? = null,
+)
 data class VehicleLocation(val address: String? = null, val latitude: Double? = null, val longitude: Double? = null)
 
 data class RecommendationRequestDto(
     @SerializedName("destinationName") val destinationName: String?,
     @SerializedName("previousConversationIds") val previousConversationIds: List<String> = emptyList(),
+    @SerializedName("tripId") val tripId: String? = null,
 )
 
 data class RecommendedTopicDto(
@@ -37,6 +45,9 @@ data class DepartureResponseDto(
 interface DepartureApi {
     @POST
     suspend fun recommendTopics(@Url url: String, @Body context: RecommendationRequestDto): DepartureResponseDto
+
+    @POST("trips/{tripId}/topics")
+    suspend fun tripTopics(@Path("tripId") tripId: String, @Body context: RecommendationRequestDto): DepartureResponseDto
 }
 
 class DepartureRepository(
@@ -45,6 +56,18 @@ class DepartureRepository(
     suspend fun load(context: RecommendationRequestDto): List<RecommendedTopic> = loadResponse(context).toModel()
 
     companion object {
+        fun remote(baseUrl: String): DepartureRepository {
+            val uri = java.net.URI(baseUrl)
+            require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null &&
+                uri.query == null && uri.fragment == null && baseUrl.endsWith('/'))
+            val api = Retrofit.Builder().baseUrl(baseUrl)
+                .addConverterFactory(GsonConverterFactory.create(GsonBuilder().serializeNulls().create()))
+                .build().create(DepartureApi::class.java)
+            return DepartureRepository { request ->
+                api.tripTopics(requireNotNull(request.tripId).also { require(it.isNotBlank()) }, request)
+            }
+        }
+
         fun remote(baseUrl: String, endpoint: String): DepartureRepository {
             require(baseUrl.startsWith("https://"))
             val api = Retrofit.Builder().baseUrl(baseUrl)

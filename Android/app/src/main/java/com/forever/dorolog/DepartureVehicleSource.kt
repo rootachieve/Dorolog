@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import ai.pleos.playground.navi.constants.NaviErrorCode
+import ai.pleos.playground.navi.constants.NaviMode
 import ai.pleos.playground.navi.data.DestinationArrivedInfo
 import ai.pleos.playground.navi.data.CurrentLocationInfo
 import ai.pleos.playground.navi.data.DestinationInfo
@@ -25,6 +26,13 @@ import ai.pleos.playground.vehicle.api.model.capability.AccessType
 import ai.pleos.playground.vehicle.listener.DoorPositionListener
 import ai.pleos.playground.vehicle.listener.SeatBeltNotBuckledWarningListener
 
+// Guidance mode, not isRouting alone, identifies an active destination.
+internal fun navigationDestinationPresence(mode: NaviMode, routing: Boolean): Boolean? = when {
+    mode == NaviMode.ROUTE_GUIDING || mode == NaviMode.SIMULATION_GUIDING -> true
+    routing -> null
+    else -> false
+}
+
 // The Android 14 Pleos emulator requires the pre-36 property callback APIs.
 @Suppress("DEPRECATION")
 internal class DepartureVehicleSource(
@@ -37,6 +45,7 @@ internal class DepartureVehicleSource(
     private val onLocation: (VehicleLocation) -> Unit = {},
     private val onDestinationSet: () -> Unit = {},
     private val onDestinationConfirmed: (Destination?) -> Unit = {},
+    private val observeVehicle: Boolean = true,
 ) {
     private val main = Handler(Looper.getMainLooper())
     private var generation = 0
@@ -46,6 +55,7 @@ internal class DepartureVehicleSource(
     private var addressPoll: Runnable? = null
     private var naviListener: NaviHelperEventListener? = null
     private var destinationChangePending = false
+    private var currentDestination: Destination? = null
     private var vehicle: Vehicle? = null
     private val safetyCleanup = mutableListOf<() -> Unit>()
 
@@ -57,21 +67,33 @@ internal class DepartureVehicleSource(
             // NaviHelper invokes listeners on Binder threads; serialize with UI and timer events.
             main.post { if (generation == token) action() }
         }
-        startSafety(::deliver)
+        if (observeVehicle) startSafety(::deliver)
         try {
             val helper = NaviHelper(context)
             navi = helper
             val listener = object : NaviHelperEventListener {
                 override fun onRouteStateInfo(routeStateInfo: RouteStateInfo) = deliver {
-                    if (routeStateInfo.isRouting) refreshDestination() else {
-                        destinationChangePending = false
-                        onDestinationConfirmed(null)
-                        onNavigation(null, true)
+                    when (navigationDestinationPresence(routeStateInfo.naviMode, routeStateInfo.isRouting)) {
+                        true -> refreshDestination()
+                        null -> {
+                            destinationChangePending = true
+                            currentDestination = null
+                            onDestinationSet()
+                            onNavigation(null, false)
+                        }
+                        false -> {
+                            currentDestination = null
+                            destinationChangePending = false
+                            onDestinationConfirmed(null)
+                            onNavigation(null, true)
+                        }
                     }
                 }
                 override fun onDestinationInfo(destinationInfo: DestinationInfo) = deliver {
                     destinationChangePending = false
-                    val destination = destinationInfo.name.takeIf { it.isNotBlank() }?.let(::Destination)
+                    val destination = Destination(destinationInfo.name.ifBlank { destinationInfo.address },
+                        destinationInfo.latitude, destinationInfo.longitude, destinationInfo.address)
+                    currentDestination = destination
                     onDestinationConfirmed(destination)
                     onNavigation(destination, true)
                 }
@@ -79,17 +101,19 @@ internal class DepartureVehicleSource(
                     // A queued driving update can still describe the route that just ended.
                     if (destinationChangePending) return@deliver
                     val destination = drivingInfo.destination
-                    onNavigation(destination.name.takeIf { it.isNotBlank() }?.let {
-                        Destination(it)
-                    }, true)
+                    if (currentDestination?.name == destination.name) onNavigation(currentDestination, true)
+                    else refreshDestination()
                 }
                 override fun onDestinationChanged() = deliver {
                     destinationChangePending = true
+                    currentDestination = null
                     onDestinationSet()
+                    onNavigation(null, false)
                     refreshRoute()
                 }
                 override fun onRoutingCompleted() = deliver { refreshRoute() }
                 override fun onRouteCancelled() = deliver {
+                    currentDestination = null
                     destinationChangePending = false
                     onDestinationConfirmed(null)
                     onNavigation(null, true)
@@ -141,6 +165,7 @@ internal class DepartureVehicleSource(
             onNavigation(null, false)
         }
 
+        if (!observeVehicle) return
         if (car == null) {
             publishSpeed(null)
             onParked(null)
@@ -311,6 +336,7 @@ internal class DepartureVehicleSource(
     fun stop() {
         generation++
         destinationChangePending = false
+        currentDestination = null
         addressPoll?.let(main::removeCallbacks)
         addressPoll = null
         safetyCleanup.forEach { cleanup ->
