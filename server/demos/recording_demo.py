@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 
-from .recording import (
+from ..recording.recording import (
     add_transcript,
     get_story_candidates,
     start_recording,

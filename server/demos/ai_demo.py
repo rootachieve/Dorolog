@@ -1,7 +1,7 @@
 from datetime import datetime
 from time import perf_counter
 
-from .llm import (
+from ..ai.llm import (
     create_followup_question,
     organize_conversation,
     recommend_topics,

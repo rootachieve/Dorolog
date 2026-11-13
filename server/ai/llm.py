@@ -4,7 +4,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from .schemas import (
+from ..schemas import (
     ConversationSummary,
     CurrentStoryTitle,
     FirstQuestion,
@@ -156,7 +156,9 @@ def organize_conversation(conversation: str) -> ConversationSummary:
                     "각 발화 앞의 대괄호에는 기록 시각과 지역이 있습니다. "
                     "각 이야기의 location과 recordedAt에는 그 이야기가 시작된 발화의 지역과 시각을 그대로 복사하세요. "
                     "지역과 시각을 추측하거나 다른 형식으로 바꾸지 마세요. "
-                    "대화에 없는 내용을 추측하지 말고, 정리할 대화가 없으면 stories를 빈 목록으로 반환하세요."
+                    "대화에 없는 내용을 추측하지 마세요. "
+                    "구체적인 사건, 경험, 계획이나 감정이 있어 가족의 기억으로 남길 만한 대화만 이야기로 만드세요. "
+                    "인사, 감탄, 짧은 맞장구, 길 안내나 음성 인식 오류뿐이면 stories를 빈 목록으로 반환하세요."
                 ),
             },
             {
@@ -168,4 +170,3 @@ def organize_conversation(conversation: str) -> ConversationSummary:
     )
 
     return response.output_parsed
-

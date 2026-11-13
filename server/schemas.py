@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -23,8 +23,11 @@ class FollowupQuestionRequest(BaseModel):
 
 
 class RecordingStartRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     destination: str
     topic: str
+    trip_id: str = Field(default="", alias="tripId")
 
 
 class TranscriptRequest(BaseModel):
@@ -33,6 +36,14 @@ class TranscriptRequest(BaseModel):
     text: str
     location: str
     recorded_at: datetime = Field(alias="recordedAt")
+    latitude: Optional[float] = Field(default=None, ge=-90.0, le=90.0)
+    longitude: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
+
+    @model_validator(mode="after")
+    def validate_coordinate_pair(self):
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("위도와 경도는 함께 보내야 합니다.")
+        return self
 
 
 class TopicQuestions(BaseModel):
@@ -79,6 +90,69 @@ class CurrentStoryTitle(BaseModel):
 
 ShortHighlight = Annotated[str, StringConstraints(max_length=25)]
 NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+SessionText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=256),
+]
+
+
+class ConversationAudioFormat(BaseModel):
+    encoding: Literal["pcm_s16le"]
+    sample_rate_hz: Literal[24000]
+    channels: Literal[1]
+    frame_duration_ms: Literal[20]
+
+
+class ConversationStartMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["session.start"]
+    protocol_version: Literal[1]
+    session_id: Optional[SessionText] = None
+    topic_id: SessionText
+    question: str = Field(min_length=1, max_length=4000)
+    destination_name: Optional[str] = Field(default=None, max_length=1000)
+    trip_id: SessionText
+    current_address: Optional[str] = Field(default=None, max_length=1000)
+    latitude: Optional[float] = Field(default=None, ge=-90.0, le=90.0)
+    longitude: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
+    audio: ConversationAudioFormat
+
+    @model_validator(mode="after")
+    def validate_coordinate_pair(self):
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("위도와 경도는 함께 보내야 합니다.")
+        return self
+
+
+class ConversationLocationMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["location.changed"]
+    trip_id: SessionText
+    current_address: Optional[str] = Field(default=None, max_length=1000)
+    latitude: Optional[float] = Field(default=None, ge=-90.0, le=90.0)
+    longitude: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
+
+    @model_validator(mode="after")
+    def validate_coordinate_pair(self):
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("위도와 경도는 함께 보내야 합니다.")
+        return self
+
+
+class ConversationResponseCreateMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["response.create"]
+    reason: Literal["silence"]
+    silence_ms: Literal[30000]
+
+
+class ConversationResponseCancelMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["response.cancel"]
 
 
 class Story(BaseModel):
@@ -151,4 +225,96 @@ class SavedStoriesRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     story_ids: list[NonEmptyText] = Field(alias="storyIds")
+
+
+class TripCreateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    origin_name: NonEmptyText = Field(
+        default="위치 정보 없음",
+        alias="originName",
+    )
+    origin_latitude: Optional[float] = Field(
+        default=None,
+        alias="originLatitude",
+        ge=-90.0,
+        le=90.0,
+    )
+    origin_longitude: Optional[float] = Field(
+        default=None,
+        alias="originLongitude",
+        ge=-180.0,
+        le=180.0,
+    )
+    destination_name: Optional[NonEmptyText] = Field(
+        default=None,
+        alias="destinationName",
+    )
+    destination_latitude: Optional[float] = Field(
+        default=None,
+        alias="destinationLatitude",
+        ge=-90.0,
+        le=90.0,
+    )
+    destination_longitude: Optional[float] = Field(
+        default=None,
+        alias="destinationLongitude",
+        ge=-180.0,
+        le=180.0,
+    )
+
+    @model_validator(mode="after")
+    def validate_coordinate_pairs(self):
+        if (self.origin_latitude is None) != (self.origin_longitude is None):
+            raise ValueError("출발지 위도와 경도는 함께 보내야 합니다.")
+        if (self.destination_latitude is None) != (self.destination_longitude is None):
+            raise ValueError("목적지 위도와 경도는 함께 보내야 합니다.")
+        return self
+
+
+class TripResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    origin_name: str = Field(alias="originName")
+    origin_latitude: Optional[float] = Field(alias="originLatitude")
+    origin_longitude: Optional[float] = Field(alias="originLongitude")
+    destination_name: Optional[str] = Field(alias="destinationName")
+    destination_latitude: Optional[float] = Field(alias="destinationLatitude")
+    destination_longitude: Optional[float] = Field(alias="destinationLongitude")
+    status: Literal["active", "finished"]
+    started_at: datetime = Field(alias="startedAt")
+    ended_at: Optional[datetime] = Field(alias="endedAt")
+    story_count: int = Field(alias="storyCount", ge=0)
+
+
+class RecentTripsResponse(BaseModel):
+    trips: list[TripResponse]
+
+
+class TripDetailResponse(TripResponse):
+    stories: list[StoredStory]
+    saved_story_ids: list[str] = Field(alias="savedStoryIds")
+
+
+class StoryMapItem(StoredStory):
+    trip_id: str = Field(alias="tripId")
+
+
+class StoryMapRegion(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    region: str
+    story_count: int = Field(alias="storyCount", ge=1)
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+
+class StoryMapResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    story_count: int = Field(alias="storyCount", ge=0)
+    trip_count: int = Field(alias="tripCount", ge=0)
+    regions: list[StoryMapRegion]
+    stories: list[StoryMapItem]
 

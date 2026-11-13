@@ -1,20 +1,33 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.responses import JSONResponse, Response
 
-from .database import (
+from .recording.database import (
+    create_trip,
+    get_story_map,
+    get_trip,
     initialize_database,
+    list_recent_trips,
     list_saved_story_ids,
     list_stories,
+    mark_trip_finished,
     replace_saved_story_ids,
+    resume_trip,
     upsert_story,
 )
-from .llm import create_first_question, create_followup_question, recommend_topics
-from .recording import (
+from .voice.conversation import run_conversation
+from .ai.llm import (
+    create_first_question,
+    create_followup_question,
+    recommend_topics,
+)
+from .recording.recording import (
     add_transcript,
+    finish_trip_recordings,
     get_story_candidates,
     preview_current_story,
+    save_trip_pending_stories,
     start_recording,
     stop_recording,
 )
@@ -27,9 +40,14 @@ from .schemas import (
     FollowupSuggestion,
     RecordingStartRequest,
     SavedStoriesRequest,
+    StoryMapResponse,
     TopicRecommendations,
     TopicRequest,
     TranscriptRequest,
+    TripCreateRequest,
+    TripDetailResponse,
+    RecentTripsResponse,
+    TripResponse,
     TripStoriesResponse,
     TripStoryUpsertRequest,
 )
@@ -65,9 +83,62 @@ def health():
     return {"status": "ok"}
 
 
+@app.websocket("/conversation")
+async def conversation(websocket: WebSocket):
+    await run_conversation(websocket)
+
+
+@app.post("/api/topics", response_model=TopicRecommendations)
 @app.post("/topics", response_model=TopicRecommendations)
 def topics(request: TopicRequest):
     return recommend_topics(request.destination_name)
+
+
+@app.post(
+    "/api/trips",
+    response_model=TripResponse,
+    status_code=201,
+)
+def create_new_trip(request: TripCreateRequest):
+    return create_trip(
+        origin_name=request.origin_name,
+        origin_latitude=request.origin_latitude,
+        origin_longitude=request.origin_longitude,
+        destination_name=request.destination_name,
+        destination_latitude=request.destination_latitude,
+        destination_longitude=request.destination_longitude,
+    )
+
+
+@app.get("/api/trips", response_model=RecentTripsResponse)
+def recent_trips(limit: int = Query(default=6, ge=1, le=50)):
+    return {"trips": list_recent_trips(limit)}
+
+
+@app.get("/api/stories/map", response_model=StoryMapResponse)
+def story_map():
+    return get_story_map()
+
+
+@app.get("/api/trips/{trip_id}", response_model=TripDetailResponse)
+def trip_detail(trip_id: str):
+    trip = get_trip(trip_id)
+    if trip is None:
+        raise HTTPException(status_code=404, detail="여행을 찾을 수 없습니다.")
+
+    return {
+        **trip,
+        "stories": list_stories(trip_id),
+        "savedStoryIds": list_saved_story_ids(trip_id),
+    }
+
+
+@app.post("/api/trips/{trip_id}/resume", response_model=TripResponse)
+def continue_trip(trip_id: str):
+    trip = resume_trip(trip_id)
+    if trip is None:
+        raise HTTPException(status_code=404, detail="여행을 찾을 수 없습니다.")
+    return trip
 
 
 @app.post("/questions/first", response_model=FirstQuestion)
@@ -82,7 +153,11 @@ def followup_question(request: FollowupQuestionRequest):
 
 @app.post("/recordings")
 def create_recording(request: RecordingStartRequest):
-    return start_recording(request.destination, request.topic)
+    return start_recording(
+        request.destination,
+        request.topic,
+        trip_id=request.trip_id,
+    )
 
 
 @app.post(
@@ -95,6 +170,8 @@ def append_transcript(recording_id: str, request: TranscriptRequest):
         request.text,
         request.location,
         request.recorded_at,
+        request.latitude,
+        request.longitude,
     )
 
 
@@ -145,6 +222,23 @@ def register_trip_story(
     response_model=TripStoriesResponse,
 )
 def get_trip_stories(trip_id: str):
+    # Android는 정차 화면에 들어오자마자 이 API를 호출한다.
+    # 먼저 30초를 채우지 못한 짧은 대화까지 정리한 뒤 완성된 목록을 반환한다.
+    save_trip_pending_stories(trip_id)
+    return {
+        "stories": list_stories(trip_id),
+        "savedStoryIds": list_saved_story_ids(trip_id),
+    }
+
+
+@app.post(
+    "/api/trips/{trip_id}/finish",
+    response_model=TripStoriesResponse,
+)
+def finish_trip(trip_id: str):
+    finish_trip_recordings(trip_id)
+    if mark_trip_finished(trip_id) is None:
+        raise HTTPException(status_code=404, detail="여행을 찾을 수 없습니다.")
     return {
         "stories": list_stories(trip_id),
         "savedStoryIds": list_saved_story_ids(trip_id),
