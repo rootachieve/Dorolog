@@ -21,7 +21,6 @@ def start_recording(destination: str, topic: str) -> dict:
         "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "ended_at": "",
         "pending_transcript": [],
-        "saved_stories": [],
     }
     recordings[recording_id] = recording
 
@@ -57,10 +56,8 @@ def preview_current_story(recording_id: str) -> CurrentStoryTitle:
 
 
 def get_story_candidates(recording_id: str) -> ConversationSummary:
-    """정차 중 고를 이야기 후보를 만들되 기록을 저장하거나 비우지 않는다."""
+    """정차 중이나 기록 종료 후 고를 이야기 후보를 만든다."""
     recording = recordings[recording_id]
-    if recording["status"] != "recording":
-        raise ValueError("이미 종료된 기록에서는 이야기 후보를 만들 수 없습니다.")
 
     if not recording["pending_transcript"]:
         return ConversationSummary(stories=[])
@@ -72,33 +69,9 @@ def get_story_candidates(recording_id: str) -> ConversationSummary:
     return organize_conversation(conversation)
 
 
-def save_current_story(recording_id: str) -> list[dict]:
-    """아직 저장하지 않은 대화를 이야기로 정리하고 기록에 저장한다."""
-    recording = recordings[recording_id]
-    if recording["status"] != "recording":
-        raise ValueError("이미 종료된 기록은 다시 저장할 수 없습니다.")
-
-    if not recording["pending_transcript"]:
-        return []
-
-    conversation = "\n".join(
-        item["text"] for item in recording["pending_transcript"]
-    )
-    summary = organize_conversation(conversation)
-    new_stories = [story.model_dump() for story in summary.stories]
-
-    recording["saved_stories"].extend(new_stories)
-    recording["pending_transcript"].clear()
-
-    return new_stories
-
-
 def stop_recording(recording_id: str) -> dict:
-    """남은 대화를 저장한 뒤 현재 여정 기록을 종료한다."""
+    """대화 내용은 그대로 둔 채 현재 여정 기록을 종료한다."""
     recording = recordings[recording_id]
-
-    if recording["pending_transcript"]:
-        save_current_story(recording_id)
 
     recording["status"] = "stopped"
     recording["ended_at"] = datetime.now().astimezone().isoformat(timespec="seconds")

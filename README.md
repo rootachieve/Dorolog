@@ -25,7 +25,7 @@ AI 기능은 Python 함수로 구현했고, 앱에서는 FastAPI를 통해 JSON�
 - 음성 인식된 대화 텍스트 누적 (`add_transcript()`)
 - 주행 중 현재 이야기 제목 미리보기 (`preview_current_story()`)
 - 정차 중 제목, 요약, 핵심 대화가 포함된 이야기 후보 생성 (`get_story_candidates()`)
-- 기록 종료 시 남은 대화 자동 저장 (`stop_recording()`)
+- 대화 내용은 유지하고 여정 기록 종료 (`stop_recording()`)
 - 위 기능을 호출할 수 있는 FastAPI 엔드포인트 (`server/api.py`)
 
 ## API
@@ -40,13 +40,13 @@ AI 기능은 Python 함수로 구현했고, 앱에서는 FastAPI를 통해 JSON�
 | POST | `/recordings/{recording_id}/transcripts` | `add_transcript()` | 현재 기록에 추가된 발화 |
 | POST | `/recordings/{recording_id}/preview` | `preview_current_story()` | 주행 화면에 표시할 현재 이야기 제목 |
 | POST | `/recordings/{recording_id}/stories` | `get_story_candidates()` | 저장 전 이야기 후보 목록 |
-| POST | `/recordings/{recording_id}/stop` | `stop_recording()` | 남은 이야기까지 저장된 최종 기록 |
+| POST | `/recordings/{recording_id}/stop` | `stop_recording()` | 종료 상태와 종료 시간이 반영된 기록 |
 
 `preview_current_story()`는 아직 저장하지 않은 `pending_transcript`로 현재 이야기 제목만 만들어 반환합니다. 기록을 저장하거나 비우지 않으며, 앱에서 1분 경과 신호가 왔을 때 호출할 수 있습니다.
 
-`get_story_candidates()`는 정차 중 `pending_transcript`를 이야기별 제목, 요약, 핵심 대화로 정리합니다. 핵심 대화는 이야기마다 최대 3개이며 각 25자 이내입니다. 결과를 반환할 뿐 기록을 저장하거나 `pending_transcript`를 비우지는 않습니다.
+`get_story_candidates()`는 정차 중이나 기록 종료 후 `pending_transcript`를 이야기별 제목, 요약, 핵심 대화로 정리합니다. 핵심 대화는 이야기마다 최대 3개이며 각 25자 이내입니다. 결과를 반환할 뿐 기록을 저장하거나 `pending_transcript`를 비우지는 않습니다.
 
-`stop_recording()`은 아직 저장하지 않은 대화가 있으면 먼저 저장하고 기록 상태를 `stopped`로 변경합니다.
+`stop_recording()`은 대화를 정리하거나 저장하지 않고 기록 상태를 `stopped`로 변경하고 종료 시간을 남깁니다. 기존 `pending_transcript`는 그대로 유지됩니다.
 
 각 API의 요청과 응답 JSON은 서버 실행 후 아래 주소에서 확인할 수 있습니다.
 
