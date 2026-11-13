@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 
 class TopicRequest(BaseModel):
@@ -78,6 +78,7 @@ class CurrentStoryTitle(BaseModel):
 
 
 ShortHighlight = Annotated[str, StringConstraints(max_length=25)]
+NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class Story(BaseModel):
@@ -106,4 +107,48 @@ class ConversationSummary(BaseModel):
     stories: list[Story] = Field(
         description="주제별로 구분해 정리한 가족 이야기. 대화가 없으면 빈 목록",
     )
+
+
+class TripStoryUpsertRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    title: NonEmptyText
+    region: NonEmptyText
+    latitude: Optional[float] = Field(default=None, ge=-90.0, le=90.0)
+    longitude: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
+    summary: str = ""
+    highlights: list[ShortHighlight] = Field(default_factory=list, max_length=3)
+    recorded_at: Optional[datetime] = Field(default=None, alias="recordedAt")
+
+    @model_validator(mode="after")
+    def validate_coordinate_pair(self):
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("위도와 경도는 함께 보내야 합니다.")
+        return self
+
+
+class StoredStory(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    title: str
+    region: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    summary: str
+    highlights: list[str]
+    recorded_at: Optional[datetime] = Field(default=None, alias="recordedAt")
+
+
+class TripStoriesResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    stories: list[StoredStory]
+    saved_story_ids: list[str] = Field(alias="savedStoryIds")
+
+
+class SavedStoriesRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    story_ids: list[NonEmptyText] = Field(alias="storyIds")
 

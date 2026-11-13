@@ -26,6 +26,8 @@ AI 기능은 Python 함수로 구현했고, 앱에서는 FastAPI를 통해 JSON�
 - 주행 중 현재 이야기 제목 미리보기 (`preview_current_story()`)
 - 정차 중 제목, 요약, 핵심 대화가 포함된 이야기 후보 생성 (`get_story_candidates()`)
 - 대화 내용은 유지하고 남은 구간 또는 여정 기록 종료 (`stop_recording()`)
+- SQLite에 여행별 이야기와 저장 선택 보관 (`server/database.py`)
+- Android 정차 화면용 이야기 등록·조회·선택 저장 API (`server/api.py`)
 - 위 기능을 호출할 수 있는 FastAPI 엔드포인트 (`server/api.py`)
 
 ## API
@@ -41,6 +43,9 @@ AI 기능은 Python 함수로 구현했고, 앱에서는 FastAPI를 통해 JSON�
 | POST | `/recordings/{recording_id}/preview` | `preview_current_story()` | 주행 화면에 표시할 현재 이야기 제목 |
 | POST | `/recordings/{recording_id}/stories` | `get_story_candidates()` | 저장 전 이야기 후보 목록 |
 | POST | `/recordings/{recording_id}/stop` | `stop_recording()` | 종료 상태와 종료 시간이 반영된 기록 |
+| PUT | `/api/trips/{trip_id}/stories/{story_id}` | `upsert_story()` | AI가 정리한 이야기 등록 또는 수정 |
+| GET | `/api/trips/{trip_id}/stories` | `list_stories()` | 여행 이야기와 저장된 이야기 ID 조회 |
+| PUT | `/api/trips/{trip_id}/saved-stories` | `replace_saved_story_ids()` | 남길 이야기 ID 전체 교체 |
 
 `preview_current_story()`는 아직 저장하지 않은 `pending_transcript`로 현재 이야기 제목만 만들어 반환합니다. 기록을 저장하거나 비우지 않으며, 앱에서 1분 경과 신호가 왔을 때 호출할 수 있습니다.
 
@@ -74,7 +79,7 @@ http://127.0.0.1:8000/docs
 - 앱 Room DB 또는 서버 DB를 이용한 영구 저장
 - 서버 배포와 API 접근 인증
 
-현재 기록은 Python 메모리에 저장되므로 서버를 종료하면 사라집니다.
+이동 중 대화 기록은 Python 메모리에 있어 서버를 종료하면 사라집니다. 정리된 이야기와 사용자의 저장 선택은 `data/dorolog.db`에 보관합니다. Android 정차 화면은 여행 이야기 조회와 저장 선택 API를 통해 이 데이터를 사용합니다.
 
 ## 동작 확인 시나리오
 
