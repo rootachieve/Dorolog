@@ -22,10 +22,10 @@ AI 기능은 Python 함수로 구현했고, 앱에서는 FastAPI를 통해 JSON�
 - 대화를 이야기별로 구분 (`organize_conversation()`)
 - 이야기 제목과 요약 생성 (`organize_conversation()`)
 - 여정별 기록 시작 (`start_recording()`)
-- 음성 인식된 대화 텍스트 누적 (`add_transcript()`)
+- 음성 인식된 대화와 기록 시각·지역 누적 (`add_transcript()`)
 - 주행 중 현재 이야기 제목 미리보기 (`preview_current_story()`)
 - 정차 중 제목, 요약, 핵심 대화가 포함된 이야기 후보 생성 (`get_story_candidates()`)
-- 대화 내용은 유지하고 여정 기록 종료 (`stop_recording()`)
+- 대화 내용은 유지하고 남은 구간 또는 여정 기록 종료 (`stop_recording()`)
 - 위 기능을 호출할 수 있는 FastAPI 엔드포인트 (`server/api.py`)
 
 ## API
@@ -37,14 +37,24 @@ AI 기능은 Python 함수로 구현했고, 앱에서는 FastAPI를 통해 JSON�
 | POST | `/questions/first` | `create_first_question()` | 첫 질문 1개 |
 | POST | `/questions/follow-up` | `create_followup_question()` | 후속 질문 1개 또는 제안 없음 |
 | POST | `/recordings` | `start_recording()` | 기록 ID와 새 여정 기록 |
-| POST | `/recordings/{recording_id}/transcripts` | `add_transcript()` | 현재 기록에 추가된 발화 |
+| POST | `/recordings/{recording_id}/transcripts` | `add_transcript()` | 현재 기록에 추가된 발화·지역·시각 |
 | POST | `/recordings/{recording_id}/preview` | `preview_current_story()` | 주행 화면에 표시할 현재 이야기 제목 |
 | POST | `/recordings/{recording_id}/stories` | `get_story_candidates()` | 저장 전 이야기 후보 목록 |
 | POST | `/recordings/{recording_id}/stop` | `stop_recording()` | 종료 상태와 종료 시간이 반영된 기록 |
 
 `preview_current_story()`는 아직 저장하지 않은 `pending_transcript`로 현재 이야기 제목만 만들어 반환합니다. 기록을 저장하거나 비우지 않으며, 앱에서 1분 경과 신호가 왔을 때 호출할 수 있습니다.
 
-`get_story_candidates()`는 정차 중이나 기록 종료 후 `pending_transcript`를 이야기별 제목, 요약, 핵심 대화로 정리합니다. 핵심 대화는 이야기마다 최대 3개이며 각 25자 이내입니다. 결과를 반환할 뿐 기록을 저장하거나 `pending_transcript`를 비우지는 않습니다.
+대화 입력에는 `text`, `location`, `recordedAt`을 함께 보냅니다. `recordedAt`은 `2026-11-14T14:30:00+09:00`과 같은 ISO 8601 형식입니다.
+
+```json
+{
+  "text": "예전에 여기서 호두과자 먹었잖아",
+  "location": "천안",
+  "recordedAt": "2026-11-14T14:30:00+09:00"
+}
+```
+
+`get_story_candidates()`는 정차 중이나 기록 종료 후 `pending_transcript`를 이야기별 제목, 요약, 핵심 대화, 시작 지역과 시각으로 정리합니다. 핵심 대화는 이야기마다 최대 3개이며 각 25자 이내입니다. 결과를 반환할 뿐 기록을 저장하거나 `pending_transcript`를 비우지는 않습니다.
 
 `stop_recording()`은 대화를 정리하거나 저장하지 않고 기록 상태를 `stopped`로 변경하고 종료 시간을 남깁니다. 기존 `pending_transcript`는 그대로 유지됩니다.
 
@@ -59,10 +69,8 @@ http://127.0.0.1:8000/docs
 - 앱에서 FastAPI를 실제로 호출하는 코드
 - Pleos 목적지, 출발, 정차, 도착 신호 연결
 - 음성 인식 결과를 서버에 전달하는 부분
+- 앱에서 음성 인식 일시정지와 재개
 - 30초 무음과 1분 경과를 판단하는 앱 타이머
-- 기록 일시정지와 재개
-- 남은 목적지까지 기록 중단
-- 저장 당시 차량 위치 태그
 - 앱 Room DB 또는 서버 DB를 이용한 영구 저장
 - 서버 배포와 API 접근 인증
 

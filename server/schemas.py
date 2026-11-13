@@ -1,6 +1,7 @@
+from datetime import datetime
 from typing import Annotated, Optional
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 
 class TopicRequest(BaseModel):
@@ -27,7 +28,11 @@ class RecordingStartRequest(BaseModel):
 
 
 class TranscriptRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     text: str
+    location: str
+    recorded_at: datetime = Field(alias="recordedAt")
 
 
 class TopicQuestions(BaseModel):
@@ -76,6 +81,8 @@ ShortHighlight = Annotated[str, StringConstraints(max_length=25)]
 
 
 class Story(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     title: str = Field(
         description="이야기의 핵심을 담은 짧은 한 줄 제목",
     )
@@ -85,6 +92,13 @@ class Story(BaseModel):
     highlights: list[ShortHighlight] = Field(
         max_length=3,
         description="화면에 표시할 25자 이내 핵심 대화. 최대 3개이며 없으면 빈 목록",
+    )
+    location: str = Field(
+        description="이야기가 시작된 발화에 함께 전달된 지역",
+    )
+    recorded_at: datetime = Field(
+        alias="recordedAt",
+        description="이야기가 시작된 발화에 함께 전달된 기록 시각",
     )
 
 

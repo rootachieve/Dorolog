@@ -27,13 +27,22 @@ def start_recording(destination: str, topic: str) -> dict:
     return recording
 
 
-def add_transcript(recording_id: str, text: str) -> dict:
+def add_transcript(
+    recording_id: str,
+    text: str,
+    location: str,
+    recorded_at: datetime,
+) -> dict:
     """음성 인식으로 들어온 발화 한 문장을 현재 기록에 추가한다."""
     recording = recordings[recording_id]
     if recording["status"] != "recording":
         raise ValueError("이미 종료된 기록에는 대화를 추가할 수 없습니다.")
 
-    transcript = {"text": text}
+    transcript = {
+        "text": text,
+        "location": location,
+        "recorded_at": recorded_at.isoformat(),
+    }
     recording["pending_transcript"].append(transcript)
 
     return transcript
@@ -63,7 +72,8 @@ def get_story_candidates(recording_id: str) -> ConversationSummary:
         return ConversationSummary(stories=[])
 
     conversation = "\n".join(
-        item["text"] for item in recording["pending_transcript"]
+        f'[{item["recorded_at"]} · {item["location"]}] {item["text"]}'
+        for item in recording["pending_transcript"]
     )
 
     return organize_conversation(conversation)

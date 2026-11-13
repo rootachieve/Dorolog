@@ -140,7 +140,7 @@ def create_current_story_title(conversation: str) -> CurrentStoryTitle:
 
 
 def organize_conversation(conversation: str) -> ConversationSummary:
-    """가족 대화를 이야기별로 나누고 제목, 요약, 핵심 대화를 만든다."""
+    """가족 대화를 이야기별로 나누고 내용, 지역, 시각을 정리한다."""
     response = client.responses.parse(
         model=MODEL,
         input=[
@@ -153,6 +153,9 @@ def organize_conversation(conversation: str) -> ConversationSummary:
                     "각 핵심 대화는 25자 이내의 짧고 자연스러운 말투로 쓰고, 화자 이름과 따옴표는 넣지 마세요. "
                     "길게 말한 내용은 뜻을 유지해 줄이되 대화에 없던 내용을 만들지 말고, "
                     "의미 있는 핵심 대화가 없으면 highlights를 빈 목록으로 반환하세요. "
+                    "각 발화 앞의 대괄호에는 기록 시각과 지역이 있습니다. "
+                    "각 이야기의 location과 recordedAt에는 그 이야기가 시작된 발화의 지역과 시각을 그대로 복사하세요. "
+                    "지역과 시각을 추측하거나 다른 형식으로 바꾸지 마세요. "
                     "대화에 없는 내용을 추측하지 말고, 정리할 대화가 없으면 stories를 빈 목록으로 반환하세요."
                 ),
             },

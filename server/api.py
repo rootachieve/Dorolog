@@ -67,9 +67,17 @@ def create_recording(request: RecordingStartRequest):
     return start_recording(request.destination, request.topic)
 
 
-@app.post("/recordings/{recording_id}/transcripts")
+@app.post(
+    "/recordings/{recording_id}/transcripts",
+    response_model=TranscriptRequest,
+)
 def append_transcript(recording_id: str, request: TranscriptRequest):
-    return add_transcript(recording_id, request.text)
+    return add_transcript(
+        recording_id,
+        request.text,
+        request.location,
+        request.recorded_at,
+    )
 
 
 @app.post("/recordings/{recording_id}/preview", response_model=CurrentStoryTitle)
