@@ -17,6 +17,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -42,6 +47,7 @@ class MainActivity : ComponentActivity() {
                 animationsEnabled = resumed && systemAnimationsEnabled && carAllowsAnimation,
                 transitionAnimationsEnabled = resumed && systemAnimationsEnabled,
                 car = connectedCar,
+                archiveBrowsingAllowed = !packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE) || carAllowsAnimation,
             )
         }
         connectCar()
@@ -105,7 +111,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { Main, Departure, Archive }
+private enum class Screen { Main, TripSelection, Departure, Archive }
 
 @Composable
 internal fun DorologApp(
@@ -115,26 +121,78 @@ internal fun DorologApp(
     car: Car? = null,
     transitionAnimationsEnabled: Boolean = animationsEnabled,
     selectedTripId: String? = null,
+    archiveBrowsingAllowed: Boolean = true,
+    archiveRepository: ArchiveRepository? = null,
+    summaryRepository: TripSummaryRepository? = null,
 ) {
     var screen by remember { mutableStateOf(Screen.Main) }
     var activeTripId by remember { mutableStateOf<String?>(null) }
-    val tripId = selectedTripId?.takeIf { it.isNotBlank() }
     val returnHome = { activeTripId = null; screen = Screen.Main }
     BackHandler {
         if (screen == Screen.Main) onBackground() else returnHome()
     }
     when (screen) {
         Screen.Main -> MainScreen(
-            onStart = { if (tripId != null) { activeTripId = tripId; screen = Screen.Departure } },
+            onStart = { screen = Screen.TripSelection },
             onArchive = { screen = Screen.Archive },
             modifier = modifier,
             animationsEnabled = animationsEnabled,
-            startEnabled = tripId != null,
+        )
+        Screen.TripSelection -> TripSelectionScreen(
+            selectedTripId = selectedTripId,
+            onBack = returnHome,
+            onTripSelected = { id ->
+                require(id.isNotBlank())
+                activeTripId = id
+                screen = Screen.Departure
+            },
+            modifier = modifier,
         )
         Screen.Departure -> key(activeTripId) {
             DepartureRoute(tripId = checkNotNull(activeTripId), onBack = returnHome,
-                modifier = modifier, animationsEnabled = transitionAnimationsEnabled, car = car)
+                modifier = modifier, animationsEnabled = transitionAnimationsEnabled, car = car,
+                summaryAnimationsEnabled = animationsEnabled,
+                summaryBrowsingAllowed = archiveBrowsingAllowed,
+                summaryRepository = summaryRepository)
         }
-        Screen.Archive -> ArchiveScreen(onBack = returnHome, modifier = modifier)
+        Screen.Archive -> ArchiveBrowser(
+            onHome = returnHome, modifier = modifier, browsingAllowed = archiveBrowsingAllowed,
+            animationsEnabled = animationsEnabled,
+            repository = archiveRepository, summaryRepository = summaryRepository,
+        )
+    }
+}
+
+@Composable
+private fun ArchiveBrowser(
+    onHome: () -> Unit,
+    modifier: Modifier,
+    browsingAllowed: Boolean,
+    animationsEnabled: Boolean,
+    repository: ArchiveRepository?,
+    summaryRepository: TripSummaryRepository?,
+) {
+    val owner = remember {
+        object : ViewModelStoreOwner { override val viewModelStore = ViewModelStore() }
+    }
+    androidx.compose.runtime.DisposableEffect(owner) { onDispose { owner.viewModelStore.clear() } }
+    val archiveViewModel = androidx.lifecycle.viewmodel.compose.viewModel<ArchiveViewModel>(
+        viewModelStoreOwner = owner,
+        factory = viewModelFactory { initializer { ArchiveViewModel(repository ?: ArchiveRepository()) } },
+    )
+    var selectedTrip by remember { mutableStateOf<ArchiveTrip?>(null) }
+    val stateHolder = rememberSaveableStateHolder()
+    BackHandler { if (selectedTrip == null) onHome() else selectedTrip = null }
+    val trip = selectedTrip
+    if (trip == null) {
+        stateHolder.SaveableStateProvider("archive") {
+            ArchiveRoute(onBack = onHome, onTripClick = { selectedTrip = it }, modifier = modifier,
+                browsingAllowed = browsingAllowed, viewModel = archiveViewModel)
+        }
+    } else {
+        TripSummaryScreen(tripId = trip.id, destinationName = trip.destinationName,
+            onDone = onHome, onBack = { selectedTrip = null }, modifier = modifier,
+            animationsEnabled = animationsEnabled, browsingAllowed = browsingAllowed,
+            repository = summaryRepository)
     }
 }

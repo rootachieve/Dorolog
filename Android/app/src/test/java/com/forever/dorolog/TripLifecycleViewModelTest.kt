@@ -23,7 +23,8 @@ class TripLifecycleViewModelTest {
     private val dispatcher = StandardTestDispatcher()
     private val stories = listOf(ParkedStory("1", "바다 이야기", "부산"), ParkedStory("2", "가족 이야기", "양산"),
         ParkedStory("3", "추억 이야기", "울산"))
-    private val repository = TripRepository(loadStories = { TripStories(stories, emptySet()) }, saveStories = { _, _ -> })
+    private val repository = TripRepository(loadStories = { TripStories(stories, emptySet()) },
+        saveStories = { _, _ -> }, finishTrip = {})
 
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }
     @After fun tearDown() { Dispatchers.resetMain() }
@@ -319,13 +320,15 @@ class TripLifecycleViewModelTest {
         val vm = drivingTrip(TripRepository(loadStories = {
             loads++
             TripStories(stories, emptySet())
-        }, saveStories = { _, _ -> saved.await() }))
+        }, saveStories = { _, _ -> saved.await() }, finishTrip = {}))
         vm.onParkedChanged(true); vm.onDestinationArrived(); runCurrent()
         vm.toggleStory("1"); vm.saveStories(); runCurrent()
         vm.onDestinationSet(); vm.onDestinationConfirmed(Destination("울산"))
         vm.onDestinationArrived(Destination("울산")); runCurrent()
         assertEquals(1, loads)
-        vm.finishTrip()
+        vm.finishTrip(); runCurrent()
+        assertTrue(vm.uiState.value.finishingTrip)
+        assertEquals(DepartureViewModel.Phase.Arrived, vm.uiState.value.phase)
         saved.complete(Unit); runCurrent()
         assertEquals(1, loads)
         assertEquals(DepartureViewModel.Phase.Summary, vm.uiState.value.phase)
@@ -335,7 +338,7 @@ class TripLifecycleViewModelTest {
     @Test fun finishTripKeepsChosenIdForSummaryAndIgnoresFurtherNavigation() = runTest(dispatcher) {
         val vm = drivingTrip()
         vm.onParkedChanged(true); vm.onDestinationArrived(); runCurrent(); vm.toggleStory("2")
-        vm.finishTrip()
+        vm.finishTrip(); runCurrent()
         assertEquals(DepartureViewModel.Phase.Summary, vm.uiState.value.phase)
         assertEquals("trip", vm.uiState.value.tripId)
         assertFalse(vm.uiState.value.canSelectStories)
@@ -343,5 +346,186 @@ class TripLifecycleViewModelTest {
         vm.onNavigationChanged(Destination("서울"), true); vm.onDestinationArrived()
         assertEquals(DepartureViewModel.Phase.Summary, vm.uiState.value.phase)
         assertEquals(setOf("2"), vm.uiState.value.selectedStoryIds)
+    }
+
+    @Test fun finishWaitsForServerAcknowledgement_andBlocksNavigationWhilePending() = runTest(dispatcher) {
+        val acknowledgement = CompletableDeferred<Unit>()
+        val requests = mutableListOf<String>()
+        val vm = drivingTrip(TripRepository(finishTrip = { trip -> requests += trip; acknowledgement.await() }))
+        vm.finishTrip(); vm.finishTrip(); runCurrent()
+        assertEquals(listOf("trip"), requests)
+        assertTrue(vm.uiState.value.finishingTrip)
+        assertNull(vm.uiState.value.finishError)
+        assertEquals(DepartureViewModel.Phase.Talk, vm.uiState.value.phase)
+        vm.onDestinationSet(); vm.onDestinationConfirmed(Destination("서울"))
+        vm.onNavigationChanged(Destination("서울"), true)
+        vm.onSpeedChanged(0f); vm.onParkedChanged(true); vm.onDestinationArrived(Destination("서울"))
+        vm.onSpeedChanged(5f); runCurrent()
+        assertEquals(DepartureViewModel.Phase.Talk, vm.uiState.value.phase)
+        assertEquals("부산", vm.uiState.value.destination?.name)
+        assertFalse(vm.uiState.value.arrived)
+        assertFalse(vm.uiState.value.canSelectStories)
+        assertEquals("trip", vm.uiState.value.tripId)
+        acknowledgement.complete(Unit); runCurrent()
+        assertEquals(DepartureViewModel.Phase.Summary, vm.uiState.value.phase)
+        assertFalse(vm.uiState.value.finishingTrip)
+        assertNull(vm.uiState.value.finishError)
+        vm.finishTrip(); runCurrent()
+        assertEquals(listOf("trip"), requests)
+        assertEquals("trip", vm.uiState.value.tripId)
+    }
+
+    @Test fun failedFinishKeepsRecordingStopped_retryUsesSameTripAndCoalescesDoubleClicks() = runTest(dispatcher) {
+        val first = CompletableDeferred<Unit>()
+        val second = CompletableDeferred<Unit>()
+        val requests = mutableListOf<String>()
+        val vm = drivingTrip(TripRepository(finishTrip = { trip ->
+            requests += trip
+            if (requests.size == 1) first.await() else second.await()
+        }))
+        vm.finishTrip(); vm.finishTrip(); runCurrent()
+        first.completeExceptionally(IOException("offline")); runCurrent()
+        assertEquals(listOf("trip"), requests)
+        assertEquals(DepartureViewModel.Phase.Talk, vm.uiState.value.phase)
+        assertTrue(vm.uiState.value.finishingTrip)
+        assertNotNull(vm.uiState.value.finishError)
+        vm.onDestinationSet(); vm.onDestinationConfirmed(Destination("서울"))
+        vm.onNavigationChanged(Destination("서울"), true)
+        vm.onParkedChanged(true); vm.onDestinationArrived(Destination("서울")); runCurrent()
+        assertEquals(DepartureViewModel.Phase.Talk, vm.uiState.value.phase)
+        assertEquals("부산", vm.uiState.value.destination?.name)
+        assertFalse(vm.uiState.value.arrived)
+        vm.finishTrip(); vm.finishTrip(); runCurrent()
+        assertEquals(listOf("trip", "trip"), requests)
+        assertTrue(vm.uiState.value.finishingTrip)
+        assertNull(vm.uiState.value.finishError)
+        second.complete(Unit); runCurrent()
+        assertEquals(DepartureViewModel.Phase.Summary, vm.uiState.value.phase)
+        assertEquals("trip", vm.uiState.value.tripId)
+        assertFalse(vm.uiState.value.finishingTrip)
+        assertNull(vm.uiState.value.finishError)
+    }
+
+    @Test fun finishWaitsForPendingSelectionSave_beforePostingAndEnteringSummary() = runTest(dispatcher) {
+        val saved = CompletableDeferred<Unit>()
+        val acknowledgement = CompletableDeferred<Unit>()
+        val events = mutableListOf<String>()
+        val vm = drivingTrip(TripRepository(loadStories = { TripStories(stories, emptySet()) },
+            saveStories = { trip, ids ->
+                events += "save:$trip"
+                assertEquals(setOf("1"), ids)
+                saved.await()
+                events += "saved:$trip"
+            }, finishTrip = { trip -> events += "finish:$trip"; acknowledgement.await() }))
+        vm.onParkedChanged(true); vm.onDestinationArrived(); runCurrent()
+        vm.toggleStory("1"); vm.saveStories(); runCurrent()
+        vm.finishTrip(); runCurrent()
+        assertEquals(listOf("save:trip"), events)
+        assertTrue(vm.uiState.value.finishingTrip)
+        assertEquals(DepartureViewModel.Phase.Arrived, vm.uiState.value.phase)
+        assertFalse(vm.uiState.value.canSelectStories)
+        saved.complete(Unit); runCurrent()
+        assertEquals(listOf("save:trip", "saved:trip", "finish:trip"), events)
+        assertEquals(setOf("1"), vm.uiState.value.savedStoryIds)
+        assertEquals(DepartureViewModel.Phase.Arrived, vm.uiState.value.phase)
+        acknowledgement.complete(Unit); runCurrent()
+        assertEquals(DepartureViewModel.Phase.Summary, vm.uiState.value.phase)
+        assertEquals("trip", vm.uiState.value.tripId)
+    }
+
+    @Test fun failedPendingSaveBlocksFinish_retryReplaysExactRequestedIdsBeforeFinishing() = runTest(dispatcher) {
+        val firstSave = CompletableDeferred<Unit>()
+        val retriedSave = CompletableDeferred<Unit>()
+        val finished = CompletableDeferred<Unit>()
+        val savedIds = mutableListOf<Set<String>>()
+        val events = mutableListOf<String>()
+        val vm = drivingTrip(TripRepository(loadStories = { TripStories(stories, emptySet()) },
+            saveStories = { trip, ids ->
+                assertEquals("trip", trip)
+                savedIds += ids
+                events += "save"
+                if (savedIds.size == 1) firstSave.await() else retriedSave.await()
+                events += "save-ack"
+            }, finishTrip = { trip ->
+                assertEquals("trip", trip)
+                events += "finish"
+                finished.await()
+            }))
+        vm.onParkedChanged(true); vm.onDestinationArrived(); runCurrent()
+        vm.toggleStory("1"); vm.saveStories(); runCurrent()
+        vm.finishTrip(); runCurrent()
+        firstSave.completeExceptionally(IOException("save failed")); runCurrent()
+        assertEquals(listOf("save"), events)
+        assertEquals(listOf(setOf("1")), savedIds)
+        assertEquals(DepartureViewModel.Phase.Arrived, vm.uiState.value.phase)
+        assertTrue(vm.uiState.value.finishingTrip)
+        assertNotNull(vm.uiState.value.finishError)
+        assertTrue(vm.uiState.value.savedStoryIds.isEmpty())
+        vm.finishTrip(); vm.finishTrip(); runCurrent()
+        assertEquals(listOf(setOf("1"), setOf("1")), savedIds)
+        assertEquals(listOf("save", "save"), events)
+        assertTrue(vm.uiState.value.finishingTrip)
+        assertNull(vm.uiState.value.finishError)
+        retriedSave.complete(Unit); runCurrent()
+        assertEquals(listOf("save", "save", "save-ack", "finish"), events)
+        assertEquals(setOf("1"), vm.uiState.value.savedStoryIds)
+        assertEquals(DepartureViewModel.Phase.Arrived, vm.uiState.value.phase)
+        finished.complete(Unit); runCurrent()
+        assertEquals(DepartureViewModel.Phase.Summary, vm.uiState.value.phase)
+        assertEquals("trip", vm.uiState.value.tripId)
+        assertFalse(vm.uiState.value.finishingTrip)
+        assertNull(vm.uiState.value.finishError)
+    }
+
+    @Test fun finishingDoesNotSaveSelectionChangesWithoutAnExplicitSaveRequest() = runTest(dispatcher) {
+        val finished = CompletableDeferred<Unit>()
+        val savedIds = mutableListOf<Set<String>>()
+        val finishRequests = mutableListOf<String>()
+        val vm = drivingTrip(TripRepository(loadStories = { TripStories(stories, setOf("1")) },
+            saveStories = { _, ids -> savedIds += ids },
+            finishTrip = { trip -> finishRequests += trip; finished.await() }))
+        vm.onParkedChanged(true); vm.onDestinationArrived(); runCurrent()
+        vm.toggleStory("1"); vm.toggleStory("2")
+        assertEquals(setOf("2"), vm.uiState.value.selectedStoryIds)
+        vm.finishTrip(); runCurrent()
+        assertEquals(listOf("trip"), finishRequests)
+        assertTrue(savedIds.isEmpty())
+        assertEquals(setOf("1"), vm.uiState.value.savedStoryIds)
+        finished.complete(Unit); runCurrent()
+        assertEquals(DepartureViewModel.Phase.Summary, vm.uiState.value.phase)
+        assertTrue(savedIds.isEmpty())
+        assertEquals(setOf("1"), vm.uiState.value.savedStoryIds)
+    }
+
+    @Test fun finishRetryReplaysEarlierFailedSave_withoutSavingLaterUnrequestedSelection() = runTest(dispatcher) {
+        val savedIds = mutableListOf<Set<String>>()
+        val finishRequests = mutableListOf<String>()
+        val vm = drivingTrip(TripRepository(loadStories = { TripStories(stories, emptySet()) },
+            saveStories = { _, ids ->
+                savedIds += ids
+                if (savedIds.size == 1) throw IOException("save failed")
+            }, finishTrip = { finishRequests += it }))
+        vm.onParkedChanged(true); vm.onDestinationArrived(); runCurrent()
+        vm.toggleStory("1"); vm.saveStories(); runCurrent()
+        vm.toggleStory("1"); vm.toggleStory("2")
+        assertEquals(setOf("2"), vm.uiState.value.selectedStoryIds)
+        vm.finishTrip(); runCurrent()
+        assertNotNull(vm.uiState.value.finishError)
+        assertTrue(finishRequests.isEmpty())
+        vm.finishTrip(); runCurrent()
+        assertEquals(listOf(setOf("1"), setOf("1")), savedIds)
+        assertEquals(listOf("trip"), finishRequests)
+        assertEquals(DepartureViewModel.Phase.Summary, vm.uiState.value.phase)
+        assertEquals(setOf("1"), vm.uiState.value.savedStoryIds)
+        assertEquals(setOf("2"), vm.uiState.value.selectedStoryIds)
+    }
+
+    @Test fun missingFinishEndpoint_doesNotPretendTripCompleted() = runTest(dispatcher) {
+        val vm = drivingTrip(TripRepository())
+        vm.finishTrip(); runCurrent()
+        assertEquals(DepartureViewModel.Phase.Talk, vm.uiState.value.phase)
+        assertTrue(vm.uiState.value.finishingTrip)
+        assertNotNull(vm.uiState.value.finishError)
+        assertEquals("trip", vm.uiState.value.tripId)
     }
 }
