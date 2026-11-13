@@ -120,14 +120,15 @@ internal fun DorologApp(
     animationsEnabled: Boolean = true,
     car: Car? = null,
     transitionAnimationsEnabled: Boolean = animationsEnabled,
-    selectedTripId: String? = null,
+    tripSelectionViewModel: TripSelectionViewModel? = null,
     archiveBrowsingAllowed: Boolean = true,
     archiveRepository: ArchiveRepository? = null,
     summaryRepository: TripSummaryRepository? = null,
 ) {
     var screen by remember { mutableStateOf(Screen.Main) }
     var activeTripId by remember { mutableStateOf<String?>(null) }
-    val returnHome = { activeTripId = null; screen = Screen.Main }
+    var activeDestination by remember { mutableStateOf<Destination?>(null) }
+    val returnHome = { activeTripId = null; activeDestination = null; screen = Screen.Main }
     BackHandler {
         if (screen == Screen.Main) onBackground() else returnHome()
     }
@@ -138,18 +139,22 @@ internal fun DorologApp(
             modifier = modifier,
             animationsEnabled = animationsEnabled,
         )
-        Screen.TripSelection -> TripSelectionScreen(
-            selectedTripId = selectedTripId,
+        Screen.TripSelection -> TripSelectionRoute(
             onBack = returnHome,
-            onTripSelected = { id ->
+            onTripStarted = { id, destination ->
                 require(id.isNotBlank())
                 activeTripId = id
+                activeDestination = destination
                 screen = Screen.Departure
             },
             modifier = modifier,
+            car = car,
+            browsingAllowed = archiveBrowsingAllowed,
+            viewModel = tripSelectionViewModel,
         )
         Screen.Departure -> key(activeTripId) {
             DepartureRoute(tripId = checkNotNull(activeTripId), onBack = returnHome,
+                initialDestination = activeDestination,
                 modifier = modifier, animationsEnabled = transitionAnimationsEnabled, car = car,
                 summaryAnimationsEnabled = animationsEnabled,
                 summaryBrowsingAllowed = archiveBrowsingAllowed,

@@ -41,6 +41,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -173,13 +174,19 @@ internal fun ArchiveDestinationMap(latitude: Double, longitude: Double, modifier
     var attempt by remember(cacheKey) { mutableIntStateOf(0) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var resumed by remember(lifecycle) { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
-    val ready = remember(cacheKey, attempt, resumed) { CompletableDeferred<MapView>() }
+    // The ready callback and its native view must belong to the same resumed lifecycle.
+    var resumeGeneration by remember(lifecycle) { mutableIntStateOf(0) }
+    val ready = remember(cacheKey, attempt, lifecycle, resumeGeneration) { CompletableDeferred<MapView>() }
     DisposableEffect(lifecycle) {
-        val observer = LifecycleEventObserver { _, _ -> resumed = lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) }
+        val observer = LifecycleEventObserver { _, _ ->
+            val nowResumed = lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+            if (nowResumed && !resumed) resumeGeneration++
+            resumed = nowResumed
+        }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
     }
-    LaunchedEffect(cacheKey, resumed, attempt) {
+    LaunchedEffect(cacheKey, attempt, lifecycle, resumeGeneration, resumed) {
         if (!resumed || bitmap != null || size == IntSize.Zero) return@LaunchedEffect
         thumbnailRenderer.withPermit {
             try {
@@ -204,9 +211,10 @@ internal fun ArchiveDestinationMap(latitude: Double, longitude: Double, modifier
     Box(modifier.background(Color(0xFFE5E9F1)).onSizeChanged { size = it }) {
         val thumbnail = bitmap
         if (thumbnail != null) {
-            Image(thumbnail.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            Image(thumbnail.asImageBitmap(), contentDescription = null,
+                modifier = Modifier.fillMaxSize().testTag("archive-destination-thumbnail"), contentScale = ContentScale.Crop)
         } else if (rendering) {
-            key(cacheKey, attempt) {
+            key(cacheKey, attempt, lifecycle, resumeGeneration) {
                 NativeArchiveMap(
                     position = LatLng.from(latitude, longitude),
                     zoom = 12,
@@ -226,7 +234,7 @@ internal fun ArchiveDestinationMap(latitude: Double, longitude: Double, modifier
                         ready.complete(view)
                     },
                     onError = { ready.completeExceptionally(it) },
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().testTag("archive-destination-renderer"),
                 )
             }
         } else {

@@ -17,6 +17,7 @@ class DepartureViewModel(
     private val repository: DepartureRepository = DepartureRepository(),
     private val previousConversationIds: List<String> = emptyList(),
     private val tripRepository: TripRepository = TripRepository(),
+    initialDestination: Destination? = null,
 ) : ViewModel() {
     enum class Phase { Ready, Morphing, Talk, Arrived, Skipping, Summary }
 
@@ -47,7 +48,7 @@ class DepartureViewModel(
         val finishError: String? = null,
     )
 
-    private val _uiState = MutableStateFlow(UiState(tripId = tripId.also { require(it.isNotBlank()) }))
+    private val _uiState = MutableStateFlow(UiState(tripId = tripId.also { require(it.isNotBlank()) }, destination = initialDestination))
     val uiState = _uiState.asStateFlow()
     private var active = false
     private var moving = false
@@ -68,7 +69,7 @@ class DepartureViewModel(
         if (uiState.value.phase != Phase.Ready || uiState.value.finishingTrip) return
         loadJob?.cancel()
         cancelCountdown()
-        val request = RecommendationRequestDto(uiState.value.destination?.name, previousConversationIds)
+        val request = RecommendationRequestDto(uiState.value.destination?.name, previousConversationIds, uiState.value.tripId)
         loadJob = viewModelScope.launch {
             _uiState.update { it.copy(loading = true, contentError = false) }
             try {

@@ -151,8 +151,11 @@ class DepartureScreenTest {
 
     private fun startDriving(vm: DepartureViewModel) {
         compose.waitForIdle()
-        compose.runOnUiThread { vm.onSpeedChanged(1f) }
-        compose.waitUntil(timeoutMillis = 7_000) { vm.uiState.value.phase != DepartureViewModel.Phase.Ready }
+        compose.waitUntil(timeoutMillis = 15_000) {
+            // Vehicle speed keeps arriving after a temporary Activity pause/resume on the emulator.
+            compose.runOnUiThread { vm.onSpeedChanged(1f) }
+            vm.uiState.value.phase != DepartureViewModel.Phase.Ready
+        }
     }
 
     @Test fun drivingControls_onlyOfferFinishWhilePaused_andBlockUnsafeResume() {

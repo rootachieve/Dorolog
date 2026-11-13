@@ -10,7 +10,9 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -21,6 +23,7 @@ class DorologAppTest {
     val compose = createComposeRule()
 
     private lateinit var backDispatcher: OnBackPressedDispatcher
+    private lateinit var selectionViewModel: TripSelectionViewModel
 
     @Test
     fun touchBack_fromBothDestinations_restoresReadyMainScreen() {
@@ -52,10 +55,11 @@ class DorologAppTest {
     @Test
     fun savedStateRestoration_alwaysStartsOnHome() {
         compose.mainClock.autoAdvance = false
+        compose.runOnUiThread { selectionViewModel = TripSelectionViewModel(selectionRepository()) }
         val restoration = StateRestorationTester(compose)
         restoration.setContent {
             backDispatcher = checkNotNull(LocalOnBackPressedDispatcherOwner.current).onBackPressedDispatcher
-            DorologApp(onBackground = {}, animationsEnabled = false, selectedTripId = "selected-trip")
+            DorologApp(onBackground = {}, animationsEnabled = false, tripSelectionViewModel = selectionViewModel)
         }
 
         for ((button, screen) in destinations) {
@@ -70,25 +74,65 @@ class DorologAppTest {
 
     @Test
     fun homeStartAlwaysOpensSelection_andOnlyChosenTripCanEnterRecording() {
-        val selectedTripId = mutableStateOf<String?>(null)
-        compose.mainClock.autoAdvance = false
-        compose.setContent {
-            DorologApp(onBackground = {}, animationsEnabled = false, selectedTripId = selectedTripId.value)
-        }
+        val response = CompletableDeferred<TripIdResponseDto>()
+        val requests = CopyOnWriteArrayList<Pair<String, StartTripRequestDto>>()
+        setAppContent(selectionRepository { id, request ->
+            requests += id to request
+            response.await()
+        })
         compose.onNodeWithText("시작하기").assertIsDisplayed().assertIsEnabled()
         openScreen("시작하기", "trip-selection-screen")
-        compose.onNodeWithText("선택한 여행으로 시작").assertIsNotEnabled()
+        compose.onNodeWithText("새로 시작").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithTag("resume-selected-trip").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithTag("departure-screen").assertDoesNotExist()
-        compose.runOnIdle { selectedTripId.value = " " }
+        seedSelectionContext()
+        compose.onNodeWithTag("resume-selected-trip").performClick()
         compose.mainClock.advanceTimeByFrame()
-        compose.onNodeWithText("선택한 여행으로 시작").assertIsNotEnabled()
-        compose.runOnIdle { selectedTripId.value = "chosen-server-trip" }
+        compose.onNodeWithText("목적지 없이 시작").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(0, requests.size) }
+        compose.onNodeWithTag("departure-screen").assertDoesNotExist()
+        seedSelectionContext()
+        compose.onNodeWithText("목적지 없이 시작").performClick()
         compose.mainClock.advanceTimeByFrame()
-        compose.onNodeWithText("선택한 여행으로 시작").assertIsEnabled()
+        compose.onNodeWithText("목적지 없이 시작").assertIsNotEnabled()
         compose.onNodeWithTag("trip-selection-screen").assertIsDisplayed()
         compose.onNodeWithTag("departure-screen").assertDoesNotExist()
-        startSelectedTrip()
-        compose.onNodeWithText("chosen-server-trip").assertDoesNotExist()
+        compose.runOnIdle {
+            assertEquals("selected-trip", requests.single().first)
+            assertNull(requests.single().second.destination)
+            assertEquals(37.56, requests.single().second.origin.latitude!!, 0.0)
+            response.complete(TripIdResponseDto("selected-trip"))
+        }
+        compose.mainClock.advanceTimeBy(500)
+        compose.onNodeWithTag("departure-screen").assertIsDisplayed()
+        compose.onNodeWithTag("trip-selection-screen").assertDoesNotExist()
+        compose.onNodeWithText("selected-trip").assertDoesNotExist()
+    }
+
+    @Test
+    fun newTripStartsCreatedServerId_onlyAfterNoDestinationConfirmation() {
+        val creates = AtomicInteger()
+        val starts = CopyOnWriteArrayList<String>()
+        setAppContent(TripSelectionRepository(
+            loadTrips = { OngoingTripsResponseDto(emptyList()) },
+            createTrip = { creates.incrementAndGet(); TripIdResponseDto("new-server-trip") },
+            startTrip = { id, _ -> starts += id; TripIdResponseDto(id) },
+        ))
+        openScreen("시작하기", "trip-selection-screen")
+        seedSelectionContext()
+        compose.onNodeWithText("새로 시작").assertIsEnabled().performClick()
+        compose.mainClock.advanceTimeByFrame()
+        compose.onNodeWithText("목적지 없이 시작").assertIsDisplayed()
+        compose.onNodeWithTag("departure-screen").assertDoesNotExist()
+        compose.runOnIdle {
+            assertEquals(1, creates.get())
+            assertEquals(emptyList<String>(), starts.toList())
+        }
+        seedSelectionContext()
+        compose.onNodeWithText("목적지 없이 시작").performClick()
+        compose.mainClock.advanceTimeBy(500)
+        compose.onNodeWithTag("departure-screen").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(listOf("new-server-trip"), starts.toList()) }
     }
 
     @Test
@@ -97,7 +141,7 @@ class DorologAppTest {
         compose.mainClock.autoAdvance = false
         compose.setContent {
             key(instance.value) {
-                DorologApp(onBackground = {}, animationsEnabled = false, selectedTripId = "selected-trip")
+                DorologApp(onBackground = {}, animationsEnabled = false)
             }
         }
         compose.onNodeWithText("시작하기").performClick()
@@ -108,27 +152,29 @@ class DorologAppTest {
     }
 
     @Test
-    fun changingHomeSelection_doesNotRetargetActiveJourney_andReturningHomeCreatesFreshUi() {
-        val selectedTripId = mutableStateOf<String?>("chosen-server-trip")
+    fun returningHomeThenReselectingSameTrip_createsFreshQuestions() {
+        val injectedSelection = mutableStateOf<TripSelectionViewModel?>(null)
+        compose.runOnUiThread {
+            selectionViewModel = TripSelectionViewModel(selectionRepository())
+            injectedSelection.value = selectionViewModel
+        }
         compose.mainClock.autoAdvance = false
         compose.setContent {
-            DorologApp(onBackground = {}, animationsEnabled = false, selectedTripId = selectedTripId.value)
+            DorologApp(onBackground = {}, animationsEnabled = false, tripSelectionViewModel = injectedSelection.value)
         }
         openScreen("시작하기", "departure-screen")
         compose.onNodeWithContentDescription("다음 추천 질문").performClick()
         compose.mainClock.advanceTimeBy(500)
         compose.onNodeWithText("지난 여행에서 가장 기억에 남는 순간은 언제였나요?", substring = true).assertIsDisplayed()
-        compose.runOnIdle { selectedTripId.value = null }
-        compose.mainClock.advanceTimeByFrame()
-        compose.onNodeWithTag("departure-screen").assertIsDisplayed()
-        compose.onNodeWithText("지난 여행에서 가장 기억에 남는 순간은 언제였나요?", substring = true).assertIsDisplayed()
         compose.onNodeWithText("뒤로가기").performClick()
         compose.mainClock.advanceTimeByFrame()
         assertMainReady()
+        compose.runOnIdle {
+            selectionViewModel = TripSelectionViewModel(selectionRepository())
+            injectedSelection.value = selectionViewModel
+        }
         openScreen("시작하기", "trip-selection-screen")
-        compose.onNodeWithText("선택한 여행으로 시작").assertIsNotEnabled()
-        compose.runOnIdle { selectedTripId.value = "chosen-server-trip" }
-        compose.mainClock.advanceTimeByFrame()
+        compose.onNodeWithTag("departure-screen").assertDoesNotExist()
         startSelectedTrip()
         compose.onNodeWithText("이번 여행에서 가족이랑 꼭 같이", substring = true).assertIsDisplayed()
     }
@@ -270,11 +316,25 @@ class DorologAppTest {
             content = "가족과 나눈 대화")), listOf("saved"))
     }
 
-    private fun setAppContent(onBackground: () -> Unit = {}) {
+    private fun selectionRepository(
+        startTrip: suspend (String, StartTripRequestDto) -> TripIdResponseDto = { id, _ -> TripIdResponseDto(id) },
+    ) = TripSelectionRepository(
+        loadTrips = { OngoingTripsResponseDto(listOf(OngoingTripDto("selected-trip",
+            TripPlaceDto("서울", "서울", 37.56, 126.98),
+            TripPlaceDto("부산", "부산", 35.16, 129.16), "2026-11-13T00:00:00Z", 2))) },
+        createTrip = { TripIdResponseDto("new-server-trip") },
+        startTrip = startTrip,
+    )
+
+    private fun setAppContent(
+        repository: TripSelectionRepository = selectionRepository(),
+        onBackground: () -> Unit = {},
+    ) {
         compose.mainClock.autoAdvance = false
+        compose.runOnUiThread { selectionViewModel = TripSelectionViewModel(repository) }
         compose.setContent {
             backDispatcher = checkNotNull(LocalOnBackPressedDispatcherOwner.current).onBackPressedDispatcher
-            DorologApp(onBackground = onBackground, animationsEnabled = false, selectedTripId = "selected-trip")
+            DorologApp(onBackground = onBackground, animationsEnabled = false, tripSelectionViewModel = selectionViewModel)
         }
     }
 
@@ -288,9 +348,21 @@ class DorologAppTest {
     }
 
     private fun startSelectedTrip() {
-        compose.onNodeWithText("선택한 여행으로 시작").assertIsEnabled().performClick()
+        seedSelectionContext()
+        compose.onNodeWithTag("resume-selected-trip").assertIsEnabled().performClick()
+        compose.mainClock.advanceTimeByFrame()
+        compose.onNodeWithText("목적지 없이 시작").assertIsDisplayed()
+        seedSelectionContext()
+        compose.onNodeWithText("목적지 없이 시작").assertIsEnabled().performClick()
         compose.mainClock.advanceTimeBy(500)
         compose.onNodeWithTag("departure-screen").assertIsDisplayed()
+    }
+
+    private fun seedSelectionContext() {
+        compose.runOnIdle {
+            selectionViewModel.onNavigationChanged(null, true)
+            selectionViewModel.onLocationChanged(VehicleLocation("서울", 37.56, 126.98))
+        }
     }
 
     private fun assertMainReady() {

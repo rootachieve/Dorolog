@@ -87,6 +87,7 @@ internal fun DepartureRoute(
     summaryRepository: TripSummaryRepository? = null,
     onTripFinished: (String) -> Unit = {},
     viewModel: DepartureViewModel? = null,
+    initialDestination: Destination? = null,
 ) = key(tripId) {
     require(tripId.isNotBlank())
     val context = LocalContext.current
@@ -97,7 +98,9 @@ internal fun DepartureRoute(
     val vm = viewModel ?: androidx.lifecycle.viewmodel.compose.viewModel<DepartureViewModel>(
         viewModelStoreOwner = owner,
         factory = viewModelFactory { initializer {
-            DepartureViewModel(tripId = tripId,
+            DepartureViewModel(tripId = tripId, initialDestination = initialDestination,
+                repository = if (BuildConfig.TRIP_API_BASE_URL.isBlank()) DepartureRepository()
+                    else DepartureRepository.remote(BuildConfig.TRIP_API_BASE_URL),
                 tripRepository = if (BuildConfig.TRIP_API_BASE_URL.isBlank()) TripRepository()
                     else TripRepository.remote(BuildConfig.TRIP_API_BASE_URL))
         } },
