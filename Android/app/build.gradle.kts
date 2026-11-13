@@ -1,3 +1,5 @@
+import java.net.URI
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
@@ -23,6 +25,12 @@ android {
         val voiceUrl = providers.gradleProperty("dorolog.voiceUrl").orElse("").get()
         require(voiceUrl.isEmpty() || voiceUrl.startsWith("wss://")) { "dorolog.voiceUrl must use wss://" }
         buildConfigField("String", "DRIVING_VOICE_URL", "\"${voiceUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        val apiBaseUrl = providers.gradleProperty("dorolog.apiBaseUrl").orElse("").get()
+        require(apiBaseUrl.isEmpty() || URI(apiBaseUrl).let {
+            it.scheme == "https" && !it.host.isNullOrBlank() && it.userInfo == null &&
+                it.query == null && it.fragment == null && apiBaseUrl.endsWith('/')
+        }) { "dorolog.apiBaseUrl must be an HTTPS base URL ending with /" }
+        buildConfigField("String", "TRIP_API_BASE_URL", "\"${apiBaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
 
     buildTypes {
@@ -57,7 +65,6 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation(libs.androidx.lifecycle.viewmodel.savedstate)
     implementation(libs.retrofit)
     implementation(libs.retrofit.gson)
     implementation(libs.pleos.navi)

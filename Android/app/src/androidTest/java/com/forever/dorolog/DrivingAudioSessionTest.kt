@@ -79,7 +79,7 @@ class DrivingAudioSessionTest {
             // This test supplies call clearance; production still requires an authoritative provider.
             runtime.updateCallState(blocked = false, available = true)
             runtime.setForeground(true)
-            runtime.start(RecommendedTopic("microphone-test", "마이크 확인"), null, null)
+            runtime.start(RecommendedTopic("microphone-test", "마이크 확인"), null, null, "microphone-test-trip")
         }
         try {
             assertTrue("Actual AudioRecord frames missing: ${failure.get()}", frames.await(5, TimeUnit.SECONDS))

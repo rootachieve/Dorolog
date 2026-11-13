@@ -55,6 +55,8 @@ internal class DrivingAudioSession(
     private var topic: RecommendedTopic? = null
     private var destination: Destination? = null
     private var sessionId: String? = null
+    private var tripId: String? = null
+    private var location = VehicleLocation()
     private var transport: DrivingConversationTransport? = null
     private var serverReady = false
     private var responseActive = false
@@ -181,12 +183,14 @@ internal class DrivingAudioSession(
         if (changed || !active) listener?.onCallState(blocked, available)
     }
 
-    override fun start(topic: RecommendedTopic, destination: Destination?, sessionId: String?) {
+    override fun start(topic: RecommendedTopic, destination: Destination?, sessionId: String?,
+        tripId: String) {
         if (closed) return
         stop()
         this.topic = topic
         this.destination = destination
         this.sessionId = sessionId
+        this.tripId = tripId
         refreshCallState()
         if (!callAvailable || callBlocked) {
             listener?.onUnavailable(if (callBlocked) "통화가 끝나면 재개할 수 있어요" else "통화 상태를 확인할 수 없어요")
@@ -216,6 +220,11 @@ internal class DrivingAudioSession(
             AudioManager.AUDIOFOCUS_REQUEST_DELAYED -> listener?.onWaitingForAudio(true)
             else -> fail("다른 오디오를 사용 중이에요. 잠시 후 재개해 주세요")
         }
+    }
+
+    override fun updateLocation(location: VehicleLocation) {
+        this.location = location
+        transport?.updateLocation(location)
     }
 
     private fun handleFocus(change: Int) {
@@ -291,7 +300,8 @@ internal class DrivingAudioSession(
                 override fun onFailure(message: String) = dispatch { serverFailure(message) }
             })
             transport = socket
-            socket.connect(requireNotNull(topic), destination, sessionId)
+            socket.connect(requireNotNull(topic), destination, sessionId, requireNotNull(tripId),
+                location.address, location.latitude, location.longitude)
             connectionTimeout = scope.launch {
                 delay(15_000)
                 if (active && current == generation && !serverReady) serverFailure("대화 서버 연결 시간이 초과됐어요")

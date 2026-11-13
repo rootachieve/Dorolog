@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
@@ -17,7 +18,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
-import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -32,7 +32,7 @@ class DepartureScreenTest {
 
     @Test fun recommendationsSwipe_andArrowsChangeSelection_withoutMapOrStartButton() {
         lateinit var vm: DepartureViewModel
-        compose.runOnUiThread { vm = DepartureViewModel() }
+        compose.runOnUiThread { vm = DepartureViewModel(tripId = "selected-trip") }
         compose.setContent {
             val state by vm.uiState.collectAsStateWithLifecycle()
             DepartureScreen(state, {}, vm::selectTopic, { vm.moveTopic(-1) }, { vm.moveTopic(1) }, vm::retry)
@@ -76,12 +76,13 @@ class DepartureScreenTest {
     @Test fun morphInterpolatesBackground_thenDrivingHidesBack_andPhysicalBackPauses() {
         lateinit var vm: DepartureViewModel
         lateinit var back: androidx.activity.OnBackPressedDispatcher
-        compose.runOnUiThread { vm = DepartureViewModel(savedStateHandle = SavedStateHandle(mapOf("phase" to "Morphing"))) }
+        compose.runOnUiThread { vm = DepartureViewModel(tripId = "selected-trip") }
         compose.mainClock.autoAdvance = false
         compose.setContent {
             back = checkNotNull(LocalOnBackPressedDispatcherOwner.current).onBackPressedDispatcher
-            DepartureRoute(onBack = {}, viewModel = vm)
+            DepartureRoute(tripId = "selected-trip", onBack = {}, viewModel = vm)
         }
+        startDriving(vm)
         compose.mainClock.advanceTimeByFrame()
         fun backgroundRed(tag: String): Float {
             val image = compose.onNodeWithTag(tag).captureToImage().toPixelMap()
@@ -100,15 +101,16 @@ class DepartureScreenTest {
         compose.mainClock.advanceTimeByFrame()
         compose.onNodeWithTag("finish-conversation").assertIsDisplayed().performClick()
         compose.mainClock.advanceTimeBy(800)
-        compose.onNodeWithTag("departure-screen").assertIsDisplayed()
-        compose.onNodeWithText("출발 전").assertIsDisplayed()
+        compose.onNodeWithTag("settlement-screen").assertIsDisplayed()
+        compose.onNodeWithText("여행 결산").assertIsDisplayed()
         compose.runOnUiThread { back.onBackPressed() }
     }
 
     @Test fun disabledAnimations_completeMorphWithoutWaiting() {
         lateinit var vm: DepartureViewModel
-        compose.runOnUiThread { vm = DepartureViewModel(savedStateHandle = SavedStateHandle(mapOf("phase" to "Morphing"))) }
-        compose.setContent { DepartureRoute(onBack = {}, animationsEnabled = false, viewModel = vm) }
+        compose.runOnUiThread { vm = DepartureViewModel(tripId = "selected-trip") }
+        compose.setContent { DepartureRoute(tripId = "selected-trip", onBack = {}, animationsEnabled = false, viewModel = vm) }
+        startDriving(vm)
         compose.onNodeWithTag("talk-screen").assertIsDisplayed()
         compose.onNodeWithContentDescription("다음 추천 질문").assertDoesNotExist()
     }
@@ -118,10 +120,10 @@ class DepartureScreenTest {
         val owner = object : LifecycleOwner { override val lifecycle = LifecycleRegistry(this) }
         compose.runOnUiThread {
             owner.lifecycle.currentState = Lifecycle.State.RESUMED
-            vm = DepartureViewModel()
+            vm = DepartureViewModel(tripId = "selected-trip")
         }
         compose.setContent {
-            CompositionLocalProvider(LocalLifecycleOwner provides owner) { DepartureRoute(onBack = {}, viewModel = vm) }
+            CompositionLocalProvider(LocalLifecycleOwner provides owner) { DepartureRoute(tripId = "selected-trip", onBack = {}, viewModel = vm) }
         }
         compose.waitForIdle()
         compose.mainClock.autoAdvance = false
@@ -140,6 +142,12 @@ class DepartureScreenTest {
         compose.runOnUiThread { owner.lifecycle.currentState = Lifecycle.State.DESTROYED }
     }
 
+    private fun startDriving(vm: DepartureViewModel) {
+        compose.waitForIdle()
+        compose.runOnUiThread { vm.onSpeedChanged(1f) }
+        compose.waitUntil(timeoutMillis = 7_000) { vm.uiState.value.phase != DepartureViewModel.Phase.Ready }
+    }
+
     @Test fun drivingControls_onlyOfferFinishWhilePaused_andBlockUnsafeResume() {
         val topics = sampleDepartureResponse.toModel()
         val departure = DepartureViewModel.UiState(topics = topics, selectedTopicId = topics.first().id,
@@ -153,7 +161,8 @@ class DepartureScreenTest {
         compose.onNodeWithTag("conversation-wave").assertIsDisplayed()
         compose.onNodeWithText("뒤로가기").assertDoesNotExist()
         compose.onNodeWithText("종료하기").assertDoesNotExist()
-        compose.onNodeWithTag("pause-conversation").performClick()
+        // Pleos can reposition the embedded test window while dispatching touch events.
+        compose.onNodeWithTag("pause-conversation").performSemanticsAction(SemanticsActions.OnClick) { it() }
         compose.runOnIdle {
             assertEquals(1, pauses)
             state = state.copy(paused = true, resumeEnabled = false, status = "통화 중")
@@ -161,16 +170,17 @@ class DepartureScreenTest {
         compose.onNodeWithTag("resume-conversation").assertIsNotEnabled()
         compose.onNodeWithTag("finish-conversation").assertIsDisplayed()
         compose.runOnIdle { state = state.copy(resumeEnabled = true, status = null) }
-        compose.onNodeWithTag("resume-conversation").assertIsEnabled().performClick()
+        compose.onNodeWithTag("resume-conversation").assertIsEnabled()
+            .performSemanticsAction(SemanticsActions.OnClick) { it() }
         compose.runOnIdle { assertEquals(1, resumes) }
     }
 
-    @Test fun arrivalShowsActualDestination_withoutInventedSavedStories() {
-        compose.setContent { ArrivalScreen(Destination("부산 할머니댁"), {}) }
-        compose.onNodeWithTag("arrival-screen").assertIsDisplayed()
-        compose.onNodeWithText("목적지 도착").assertIsDisplayed()
-        compose.onNodeWithText("부산 할머니댁").assertIsDisplayed()
-        compose.onNodeWithText("확인").assertIsDisplayed()
+    @Test fun parkedShowsEmptyTrip_withoutInventedSavedStories() {
+        compose.setContent { ParkedScreen(DepartureViewModel.UiState(destination = Destination("부산 할머니댁")), {}, {}, {}, {}, {}) }
+        compose.onNodeWithTag("parked-screen").assertIsDisplayed()
+        compose.onNodeWithText("주차 중").assertIsDisplayed()
+        compose.onNodeWithText("남길 이야기 고르기").assertIsDisplayed()
+        compose.onNodeWithText("이야기 저장").assertIsDisplayed()
         compose.onNodeWithText("5개의 이야기를 저장했어요", substring = true).assertDoesNotExist()
     }
 }

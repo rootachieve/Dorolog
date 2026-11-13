@@ -1,6 +1,5 @@
 package com.forever.dorolog
 
-import androidx.lifecycle.SavedStateHandle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -232,31 +231,30 @@ class DrivingViewModelTest {
         vm.finish()
     }
 
-    @Test fun recreation_restoresQuestionAndSession_butNeverAutomaticallyCaptures() = runTest(dispatcher) {
-        val saved = SavedStateHandle(mapOf(
-            "drivingActive" to true, "drivingQuestion" to "이어서 할 질문", "drivingSessionId" to "retained",
-        ))
+    @Test fun freshViewModel_startsNewConversationForTheChosenTrip() = runTest(dispatcher) {
+        val previousRuntime = FakeRuntime()
+        val previous = started(previousRuntime)
+        previousRuntime.listener.onQuestion("이전 대화 질문")
+        previous.pause()
         val runtime = FakeRuntime()
-        val vm = started(runtime, saved)
-        assertEquals(0, runtime.starts)
-        assertTrue(vm.uiState.value.paused)
-        assertEquals("이어서 할 질문", vm.uiState.value.question)
-        vm.resume()
+        val vm = started(runtime)
         assertEquals(1, runtime.starts)
-        assertEquals("retained", runtime.resumedSession)
+        assertEquals("trip", runtime.tripId)
+        assertNull(runtime.resumedSession)
+        assertEquals("처음 질문", vm.uiState.value.question)
+        previous.finish()
         vm.finish()
-        assertFalse(saved.get<Boolean>("drivingActive")!!)
-        assertNull(saved.get<String>("drivingSessionId"))
     }
 
     @Test fun finish_thenNewDrive_startsFreshWithoutOldSessionOrPauseLatch() = runTest(dispatcher) {
         val runtime = FakeRuntime()
         val vm = started(runtime)
         vm.finish()
-        vm.start(RecommendedTopic("new", "새 여행 질문"), null)
+        vm.start(RecommendedTopic("new", "새 여행 질문"), null, "trip")
         assertEquals(2, runtime.starts)
         assertFalse(vm.uiState.value.paused)
         assertEquals("새 여행 질문", vm.uiState.value.question)
+        assertEquals("trip", runtime.tripId)
         assertNull(runtime.resumedSession)
         vm.finish()
     }
@@ -275,11 +273,32 @@ class DrivingViewModelTest {
         vm.finish()
     }
 
-    private fun started(runtime: FakeRuntime, saved: SavedStateHandle = SavedStateHandle()): DrivingViewModel =
-        DrivingViewModel(runtime, saved).apply {
+    @Test fun recordingContext_survivesPause_andNewTripNeverReusesPreviousSession() = runTest(dispatcher) {
+        val runtime = FakeRuntime()
+        val vm = DrivingViewModel(runtime).apply {
             setForeground(true)
             onSafetyChanged(false, true)
-            start(RecommendedTopic("topic", "처음 질문"), Destination("서울"))
+            onLocationChanged(VehicleLocation("서울특별시 종로구", 37.57, 126.98))
+            start(RecommendedTopic("topic", "첫 질문"), Destination("서울"), "trip")
+        }
+        assertEquals("trip", runtime.tripId)
+        assertEquals(VehicleLocation("서울특별시 종로구", 37.57, 126.98), runtime.location)
+        vm.pause()
+        vm.resume()
+        assertEquals("trip", runtime.tripId)
+        assertEquals("server-session", runtime.resumedSession)
+        vm.start(RecommendedTopic("next", "다음 질문"), Destination("부산"), "another-trip")
+        assertEquals("another-trip", runtime.tripId)
+        assertNull(runtime.resumedSession)
+        assertEquals("다음 질문", vm.uiState.value.question)
+        vm.finish()
+    }
+
+    private fun started(runtime: FakeRuntime): DrivingViewModel =
+        DrivingViewModel(runtime).apply {
+            setForeground(true)
+            onSafetyChanged(false, true)
+            start(RecommendedTopic("topic", "처음 질문"), Destination("서울"), "trip")
         }
 
     private class FakeRuntime : DrivingRuntime {
@@ -290,14 +309,19 @@ class DrivingViewModelTest {
         var callAvailable = true
         var callBlocked = false
         var ready = true
+        var tripId: String? = null
+        var location: VehicleLocation? = null
         override fun observe(listener: DrivingRuntime.Listener) { this.listener = listener; refreshCallState() }
         override fun refreshCallState() { listener.onCallState(callBlocked, callAvailable) }
-        override fun start(topic: RecommendedTopic, destination: Destination?, sessionId: String?) {
+        override fun start(topic: RecommendedTopic, destination: Destination?, sessionId: String?,
+            tripId: String) {
             starts++
             resumedSession = sessionId
+            this.tripId = tripId
             if (ready) listener.onSessionReady("server-session")
             listener.onCaptureChanged(true)
         }
+        override fun updateLocation(location: VehicleLocation) { this.location = location }
         override fun requestFollowUp(): Boolean { followUps++; return true }
         override fun stop() = Unit
         override fun close() = Unit

@@ -78,9 +78,10 @@ fun MainScreen(
     onArchive: () -> Unit,
     modifier: Modifier = Modifier,
     animationsEnabled: Boolean = true,
+    startEnabled: Boolean = true,
 ) {
-    var destination by rememberSaveable { mutableStateOf<String?>(null) }
-    var dispatched by rememberSaveable { mutableStateOf(false) }
+    var destination by remember { mutableStateOf<String?>(null) }
+    var dispatched by remember { mutableStateOf(false) }
     val white = remember { Animatable(0f) }
     val currentStart by rememberUpdatedState(onStart)
     val currentArchive by rememberUpdatedState(onArchive)
@@ -182,7 +183,7 @@ fun MainScreen(
         Box(
             Modifier.offset((maxWidth - startWidth) / 2, startTop).size(startWidth, startHeight)
                 .clip(RoundedCornerShape(65.dp)).background(Color(0xFF7C79FF))
-                .clickable(enabled = destination == null, role = Role.Button) { destination = "departure" },
+                .clickable(enabled = startEnabled && destination == null, role = Role.Button) { destination = "departure" },
             contentAlignment = Alignment.Center,
         ) {
             Text(startText, Modifier.fillMaxWidth(), color = Color.White, style = startStyle, textAlign = TextAlign.Center, maxLines = 1)

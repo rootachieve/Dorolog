@@ -25,7 +25,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,9 +59,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -78,45 +77,61 @@ private val DepartureFont = FontFamily(
 
 @Composable
 internal fun DepartureRoute(
+    tripId: String,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     animationsEnabled: Boolean = true,
     car: Car? = null,
-    viewModel: DepartureViewModel = viewModel(factory = viewModelFactory {
-        initializer { DepartureViewModel(savedStateHandle = createSavedStateHandle()) }
-    }),
+    onTripFinished: (String) -> Unit = {},
+    viewModel: DepartureViewModel? = null,
 ) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    require(tripId.isNotBlank())
     val context = LocalContext.current
-    val drivingViewModel: DrivingViewModel = viewModel(factory = viewModelFactory {
-        initializer { DrivingViewModel(DrivingAudioSession(context.applicationContext), createSavedStateHandle()) }
-    })
-    val drivingState by drivingViewModel.uiState.collectAsStateWithLifecycle()
-    val source = remember(viewModel, drivingViewModel) {
-        DepartureVehicleSource(context.applicationContext, viewModel::onNavigationChanged,
-            viewModel::onSpeedChanged, onArrived = { destination ->
-                if (viewModel.uiState.value.phase == DepartureViewModel.Phase.Talk ||
-                    viewModel.uiState.value.phase == DepartureViewModel.Phase.Morphing) {
-                    drivingViewModel.finish()
-                    viewModel.onDestinationArrived(destination)
-                }
-            }, onSafety = drivingViewModel::onSafetyChanged)
+    val owner = remember(tripId) {
+        object : ViewModelStoreOwner { override val viewModelStore = ViewModelStore() }
     }
+    DisposableEffect(owner) { onDispose { owner.viewModelStore.clear() } }
+    val vm = viewModel ?: androidx.lifecycle.viewmodel.compose.viewModel<DepartureViewModel>(
+        viewModelStoreOwner = owner,
+        factory = viewModelFactory { initializer {
+            DepartureViewModel(tripId = tripId,
+                tripRepository = if (BuildConfig.TRIP_API_BASE_URL.isBlank()) TripRepository()
+                    else TripRepository.remote(BuildConfig.TRIP_API_BASE_URL))
+        } },
+    )
+    require(vm.uiState.value.tripId == tripId)
+    val uiState by vm.uiState.collectAsStateWithLifecycle()
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val drivingViewModel: DrivingViewModel = androidx.lifecycle.viewmodel.compose.viewModel(
+        viewModelStoreOwner = owner,
+        factory = viewModelFactory { initializer { DrivingViewModel(DrivingAudioSession(context.applicationContext)) } },
+    )
+    val drivingState by drivingViewModel.uiState.collectAsStateWithLifecycle()
+    val source = remember(vm, drivingViewModel) {
+        DepartureVehicleSource(context.applicationContext, vm::onNavigationChanged,
+            vm::onSpeedChanged, onArrived = vm::onDestinationArrived,
+            onSafety = drivingViewModel::onSafetyChanged,
+            onParked = vm::onParkedChanged,
+            onLocation = drivingViewModel::onLocationChanged,
+            onDestinationSet = vm::onDestinationSet,
+            onDestinationConfirmed = vm::onDestinationConfirmed)
+    }
+
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         if (lifecycle.currentState == Lifecycle.State.RESUMED) {
             source.start(car)
         }
     }
-    var permissionsRequested by rememberSaveable { mutableStateOf(false) }
+    var permissionsRequested by remember { mutableStateOf(false) }
     LaunchedEffect(car, uiState.phase) {
-        if (!permissionsRequested && uiState.phase == DepartureViewModel.Phase.Ready) {
+        if (!permissionsRequested) {
             permissionsRequested = true
             val permissions = buildList {
                 add(Manifest.permission.RECORD_AUDIO)
                 add(Manifest.permission.READ_PHONE_STATE)
                 if (context.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
                     add(Car.PERMISSION_SPEED)
+                    add(Car.PERMISSION_POWERTRAIN)
                     add("pleos.car.permission.CAR_SAFETY")
                     add("pleos.car.permission.CAR_DOORS")
                 }
@@ -125,20 +140,21 @@ internal fun DepartureRoute(
         }
     }
     LifecycleResumeEffect(car, source) {
-        viewModel.setActive(true)
+        vm.setActive(true)
         drivingViewModel.setForeground(true)
         source.start(car)
-        onPauseOrDispose { viewModel.setActive(false); drivingViewModel.setForeground(false) }
+        onPauseOrDispose { vm.setActive(false); drivingViewModel.setForeground(false); source.stop() }
     }
     DisposableEffect(source) {
         onDispose { source.stop(); drivingViewModel.setForeground(false) }
     }
-    LaunchedEffect(uiState.phase) {
-        if (uiState.phase == DepartureViewModel.Phase.Talk) {
+    LaunchedEffect(uiState.phase, uiState.arrived) {
+        if (uiState.phase == DepartureViewModel.Phase.Talk && !uiState.arrived) {
             uiState.topics.firstOrNull { it.id == uiState.selectedTopicId }?.let {
-                drivingViewModel.start(it, uiState.destination)
+                drivingViewModel.start(it, uiState.destination, uiState.tripId)
             }
-        }
+        } else if (uiState.phase != DepartureViewModel.Phase.Morphing) drivingViewModel.finish()
+        if (uiState.phase == DepartureViewModel.Phase.Summary) onTripFinished(uiState.tripId)
     }
     val morph = remember { Animatable(if (uiState.phase == DepartureViewModel.Phase.Talk) 1f else 0f) }
     LaunchedEffect(uiState.phase, lifecycle, animationsEnabled) {
@@ -147,30 +163,43 @@ internal fun DepartureRoute(
             if (animationsEnabled) morph.animateTo(target, tween(700, easing = FastOutSlowInEasing))
             else morph.snapTo(target)
             if (uiState.phase == DepartureViewModel.Phase.Morphing && lifecycle.currentState == Lifecycle.State.RESUMED) {
-                viewModel.onMorphFinished()
+                vm.onMorphFinished()
             }
         }
     }
-    val back = {
+    val back: () -> Unit = {
         when (uiState.phase) {
-            DepartureViewModel.Phase.Ready -> { viewModel.leave(); onBack() }
+            DepartureViewModel.Phase.Ready, DepartureViewModel.Phase.Arrived,
+            DepartureViewModel.Phase.Skipping -> { vm.leave(); onBack() }
             DepartureViewModel.Phase.Talk -> drivingViewModel.pause()
             DepartureViewModel.Phase.Morphing -> Unit
-            DepartureViewModel.Phase.Arrived -> { viewModel.leave(); onBack() }
+            DepartureViewModel.Phase.Summary -> { vm.leave(); onBack() }
         }
     }
     BackHandler(onBack = back)
-    if (uiState.phase == DepartureViewModel.Phase.Arrived) {
-        ArrivalScreen(uiState.destination, back, modifier)
-    } else if (uiState.phase == DepartureViewModel.Phase.Talk) {
-        TalkScreen(uiState, drivingState, drivingViewModel::pause, drivingViewModel::resume,
-            onFinish = { drivingViewModel.finish(); viewModel.leave(); onBack() }, modifier = modifier)
-    } else {
-        DepartureScreen(uiState = uiState, onBack = back, onSelectTopic = viewModel::selectTopic,
-            onPrevious = { viewModel.moveTopic(-1) }, onNext = { viewModel.moveTopic(1) },
-            onRetry = viewModel::retry, modifier = modifier, morphProgress = morph.value,
+    when (uiState.phase) {
+        DepartureViewModel.Phase.Arrived -> ParkedScreen(uiState, vm::toggleStory,
+            vm::saveStories, vm::toggleSkip, vm::finishTrip, vm::retryStories, modifier)
+        DepartureViewModel.Phase.Skipping -> SkippedRecordingScreen(uiState.destination,
+            vm::toggleSkip, vm::finishTrip, modifier)
+        DepartureViewModel.Phase.Summary -> TripSummaryScreen(uiState.tripId, back, modifier)
+        DepartureViewModel.Phase.Talk -> TalkScreen(uiState,
+            if (uiState.arrived) drivingState.copy(paused = true, resumeEnabled = false,
+                status = "목적지에 도착했어요. P단으로 주차하면 이야기를 고를 수 있어요") else drivingState,
+            drivingViewModel::pause, drivingViewModel::resume,
+            onFinish = vm::finishTrip, modifier = modifier)
+        else -> DepartureScreen(uiState = uiState, onBack = back, onSelectTopic = vm::selectTopic,
+            onPrevious = { vm.moveTopic(-1) }, onNext = { vm.moveTopic(1) },
+            onRetry = vm::retry, modifier = modifier, morphProgress = morph.value,
             animationsEnabled = animationsEnabled)
     }
+    if (uiState.arrivalDialogPending) AlertDialog(
+        onDismissRequest = vm::dismissArrivalDialog,
+        title = { Text("다음 목적지에 도착했어요") },
+        text = { Text("다음 목적지까지 기록 멈추기 설정이 해제되었어요") },
+        confirmButton = { TextButton(onClick = vm::dismissArrivalDialog) { Text("확인") } },
+    )
+
 }
 
 @Composable
@@ -508,25 +537,27 @@ internal fun TalkScreen(
 }
 
 @Composable
-internal fun ArrivalScreen(destination: Destination?, onConfirm: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxSize().clip(RoundedCornerShape(40.dp)).background(Color(0xFFF7F8FD))
-        .border(1.dp, Color(0x33131417), RoundedCornerShape(40.dp)).padding(32.dp).testTag("arrival-screen"),
-        horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(stringResource(R.string.destination_arrived), color = Color.White, fontFamily = DepartureFont,
-            modifier = Modifier.align(Alignment.Start).clip(RoundedCornerShape(66.dp))
-                .background(Color(0xFF7C79FF)).padding(horizontal = 20.dp, vertical = 12.dp))
-        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Text(destination?.name.orEmpty(), fontFamily = QuestionFont, fontSize = 48.sp, textAlign = TextAlign.Center)
-            Text(stringResource(R.string.arrival_message), fontFamily = DepartureFont, fontSize = 24.sp,
-                textAlign = TextAlign.Center, modifier = Modifier.padding(16.dp))
-            Text(stringResource(R.string.arrival_without_server), fontFamily = DepartureFont, fontSize = 16.sp,
-                color = Color(0xFF575760), textAlign = TextAlign.Center)
-        }
-        Button(onClick = onConfirm, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5A46FA)),
-            contentPadding = PaddingValues(horizontal = 40.dp, vertical = 12.dp), modifier = Modifier.heightIn(min = 48.dp)) {
-            Text(stringResource(R.string.confirm), fontFamily = DepartureFont, fontSize = 24.sp)
-        }
+private fun SkippedRecordingScreen(destination: Destination?, onResume: () -> Unit, onFinish: () -> Unit, modifier: Modifier) {
+    Column(modifier.fillMaxSize().clip(RoundedCornerShape(40.dp)).background(Color(0xFFF8FAFE))
+        .padding(32.dp).testTag("skipped-recording-screen"),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically)) {
+        Text("다음 목적지까지 기록을 쉬고 있어요", fontFamily = DepartureFont, fontSize = 28.sp, textAlign = TextAlign.Center)
+        destination?.let { Text(it.name, fontFamily = DepartureFont, fontSize = 24.sp) }
+        Text("도착하면 기록 멈추기가 자동으로 해제돼요", fontFamily = DepartureFont, fontSize = 20.sp)
+        Button(onClick = onResume, modifier = Modifier.heightIn(min = 48.dp)) { Text("기록 다시 시작") }
+        TextButton(onClick = onFinish) { Text("여행 종료하기") }
+    }
+}
+
+// Separate worktree supplies the settlement content; keep this trip ID at the route boundary.
+@Composable
+internal fun TripSummaryScreen(tripId: String, onDone: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxSize().clip(RoundedCornerShape(40.dp)).background(Color(0xFFF8FAFE))
+        .padding(32.dp).testTag("settlement-screen"), horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically)) {
+        Text("여행 결산", fontFamily = DepartureFont, fontSize = 36.sp)
+        Text("여행이 종료되었어요", fontFamily = DepartureFont, fontSize = 24.sp)
+        Button(onClick = onDone, modifier = Modifier.heightIn(min = 48.dp)) { Text("홈으로") }
     }
 }
 

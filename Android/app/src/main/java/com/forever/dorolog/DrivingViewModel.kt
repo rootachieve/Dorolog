@@ -1,6 +1,5 @@
 package com.forever.dorolog
 
-import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
@@ -29,7 +28,9 @@ internal interface DrivingRuntime {
     fun observe(listener: Listener)
     fun refreshCallState()
     fun setForeground(foreground: Boolean) = Unit
-    fun start(topic: RecommendedTopic, destination: Destination?, sessionId: String?)
+    fun start(topic: RecommendedTopic, destination: Destination?, sessionId: String?,
+        tripId: String)
+    fun updateLocation(location: VehicleLocation) = Unit
     fun requestFollowUp(): Boolean
     fun stop()
     fun close()
@@ -37,7 +38,6 @@ internal interface DrivingRuntime {
 
 internal class DrivingViewModel(
     private val runtime: DrivingRuntime,
-    private val savedStateHandle: SavedStateHandle = SavedStateHandle(),
 ) : ViewModel() {
     data class UiState(
         val question: String = "",
@@ -50,13 +50,14 @@ internal class DrivingViewModel(
         val playing: Boolean = false,
     )
 
-    private var restored = savedStateHandle.get<Boolean>("drivingActive") == true
-    private val _uiState = MutableStateFlow(UiState(question = savedStateHandle["drivingQuestion"] ?: ""))
+    private val _uiState = MutableStateFlow(UiState())
     val uiState = _uiState.asStateFlow()
     private var topic: RecommendedTopic? = null
     private var destination: Destination? = null
+    private var tripId: String? = null
+    private var sessionId: String? = null
     private var foreground = false
-    private var manuallyPaused = restored
+    private var manuallyPaused = false
     private var running = false
     private var safetyAvailable = false
     private var safetyBlocked = false
@@ -78,7 +79,7 @@ internal class DrivingViewModel(
 
             override fun onSessionReady(sessionId: String) {
                 if (!running) return
-                savedStateHandle["drivingSessionId"] = sessionId
+                this@DrivingViewModel.sessionId = sessionId
                 serverReady = true
                 serverSpeaking = false
                 _uiState.update { it.copy(status = null) }
@@ -110,7 +111,6 @@ internal class DrivingViewModel(
 
             override fun onQuestion(question: String) {
                 if (!running || question.isBlank()) return
-                savedStateHandle["drivingQuestion"] = question
                 _uiState.update { it.copy(question = question) }
             }
 
@@ -163,15 +163,15 @@ internal class DrivingViewModel(
         })
     }
 
-    fun start(topic: RecommendedTopic, destination: Destination?) {
-        if (this.topic != null) return
+    fun start(topic: RecommendedTopic, destination: Destination?, tripId: String) {
+        if (this.topic != null) {
+            if (this.tripId == tripId) return
+            finish()
+        }
         this.topic = topic
         this.destination = destination
-        if (!restored || uiState.value.question.isBlank()) {
-            savedStateHandle["drivingQuestion"] = topic.question
-            _uiState.update { it.copy(question = topic.question) }
-        }
-        savedStateHandle["drivingActive"] = true
+        this.tripId = tripId
+        _uiState.update { it.copy(question = topic.question) }
         runtime.setForeground(foreground)
         runtime.refreshCallState()
         if (!manuallyPaused && canResume()) begin() else {
@@ -195,6 +195,8 @@ internal class DrivingViewModel(
         publishAvailability()
     }
 
+    fun onLocationChanged(location: VehicleLocation) = runtime.updateLocation(location)
+
     fun pause() {
         stopForPause()
         publishAvailability()
@@ -213,12 +215,10 @@ internal class DrivingViewModel(
     fun finish() {
         stopForPause()
         topic = null
-        restored = false
+        tripId = null
+        sessionId = null
         manuallyPaused = false
         runtime.setForeground(false)
-        savedStateHandle["drivingActive"] = false
-        savedStateHandle.remove<String>("drivingSessionId")
-        savedStateHandle.remove<String>("drivingQuestion")
         publishAvailability()
     }
 
@@ -229,7 +229,7 @@ internal class DrivingViewModel(
         serverSpeaking = false
         awaitingResponse = false
         _uiState.update { it.copy(paused = false, resumeEnabled = false, status = null) }
-        runtime.start(selected, destination, savedStateHandle["drivingSessionId"])
+        runtime.start(selected, destination, sessionId, requireNotNull(tripId))
     }
 
     private fun stopForPause() {

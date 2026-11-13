@@ -1,6 +1,7 @@
 package com.forever.dorolog
 
 import android.car.Car
+import android.car.VehicleGear
 import android.car.VehiclePropertyIds
 import android.car.hardware.CarPropertyValue
 import android.car.hardware.property.CarPropertyManager
@@ -11,6 +12,7 @@ import android.os.Looper
 import android.util.Log
 import ai.pleos.playground.navi.constants.NaviErrorCode
 import ai.pleos.playground.navi.data.DestinationArrivedInfo
+import ai.pleos.playground.navi.data.CurrentLocationInfo
 import ai.pleos.playground.navi.data.DestinationInfo
 import ai.pleos.playground.navi.data.DrivingInfo
 import ai.pleos.playground.navi.data.RouteStateInfo
@@ -31,17 +33,25 @@ internal class DepartureVehicleSource(
     private val onSpeed: (Float?) -> Unit,
     private val onArrived: (Destination?) -> Unit = {},
     private val onSafety: (blocked: Boolean, available: Boolean) -> Unit = { _, _ -> },
+    private val onParked: (Boolean?) -> Unit = {},
+    private val onLocation: (VehicleLocation) -> Unit = {},
+    private val onDestinationSet: () -> Unit = {},
+    private val onDestinationConfirmed: (Destination?) -> Unit = {},
 ) {
     private val main = Handler(Looper.getMainLooper())
     private var generation = 0
     private var navi: NaviHelper? = null
     private var properties: CarPropertyManager? = null
-    private var speedListener: CarPropertyManager.CarPropertyEventCallback? = null
+    private var propertyListener: CarPropertyManager.CarPropertyEventCallback? = null
+    private var addressPoll: Runnable? = null
+    private var naviListener: NaviHelperEventListener? = null
+    private var destinationChangePending = false
     private var vehicle: Vehicle? = null
     private val safetyCleanup = mutableListOf<() -> Unit>()
 
     fun start(car: Car?) {
         stop()
+        onLocation(VehicleLocation())
         val token = generation
         fun deliver(action: () -> Unit) {
             // NaviHelper invokes listeners on Binder threads; serialize with UI and timer events.
@@ -53,72 +63,148 @@ internal class DepartureVehicleSource(
             navi = helper
             val listener = object : NaviHelperEventListener {
                 override fun onRouteStateInfo(routeStateInfo: RouteStateInfo) = deliver {
-                    if (routeStateInfo.isRouting) refreshDestination() else onNavigation(null, true)
+                    if (routeStateInfo.isRouting) refreshDestination() else {
+                        destinationChangePending = false
+                        onDestinationConfirmed(null)
+                        onNavigation(null, true)
+                    }
                 }
                 override fun onDestinationInfo(destinationInfo: DestinationInfo) = deliver {
-                    onNavigation(destinationInfo.name.takeIf { it.isNotBlank() }?.let {
-                        Destination(it)
-                    }, true)
+                    destinationChangePending = false
+                    val destination = destinationInfo.name.takeIf { it.isNotBlank() }?.let(::Destination)
+                    onDestinationConfirmed(destination)
+                    onNavigation(destination, true)
                 }
                 override fun onDrivingInfo(drivingInfo: DrivingInfo) = deliver {
+                    // A queued driving update can still describe the route that just ended.
+                    if (destinationChangePending) return@deliver
                     val destination = drivingInfo.destination
                     onNavigation(destination.name.takeIf { it.isNotBlank() }?.let {
                         Destination(it)
                     }, true)
                 }
-                override fun onDestinationChanged() = deliver { refreshRoute() }
+                override fun onDestinationChanged() = deliver {
+                    destinationChangePending = true
+                    onDestinationSet()
+                    refreshRoute()
+                }
                 override fun onRoutingCompleted() = deliver { refreshRoute() }
-                override fun onRouteCancelled() = deliver { onNavigation(null, true) }
+                override fun onRouteCancelled() = deliver {
+                    destinationChangePending = false
+                    onDestinationConfirmed(null)
+                    onNavigation(null, true)
+                }
                 override fun onDestinationArrived(destinationArrivedInfo: DestinationArrivedInfo) =
                     deliver {
                         onArrived(destinationArrivedInfo.name.takeIf { it.isNotBlank() }?.let(::Destination))
-                        onNavigation(null, true)
                     }
-                override fun onError(errorCode: NaviErrorCode) = deliver { onNavigation(null, false) }
+                override fun onCurrentLocationInfo(currentLocationInfo: CurrentLocationInfo) = deliver {
+                    val latitude = currentLocationInfo.latitude
+                    val longitude = currentLocationInfo.longitude
+                    val validCoordinates = latitude.isFinite() && longitude.isFinite() &&
+                        latitude in -90.0..90.0 && longitude in -180.0..180.0
+                    onLocation(VehicleLocation(
+                        address = currentLocationInfo.address.trim().takeIf { it.isNotEmpty() },
+                        latitude = latitude.takeIf { validCoordinates },
+                        longitude = longitude.takeIf { validCoordinates },
+                    ))
+                }
+                override fun onError(errorCode: NaviErrorCode) = deliver {
+                    onLocation(VehicleLocation())
+                    onNavigation(null, false)
+                }
             }
+            naviListener = listener
             helper.initialize(
-                onConnected = { deliver { helper.addListener(listener); refreshRoute() } },
-                onFailed = { deliver { onNavigation(null, false) } },
+                onConnected = { deliver {
+                    helper.addListener(listener)
+                    refreshRoute()
+                    addressPoll?.let(main::removeCallbacks)
+                    val poll = object : Runnable {
+                        override fun run() {
+                            if (generation != token) return
+                            try { helper.getCurrentLocationInfo() } catch (exception: RuntimeException) {
+                                Log.w("Departure", "Current navigation address unavailable", exception)
+                                onLocation(VehicleLocation())
+                            }
+                            main.postDelayed(this, 10_000L)
+                        }
+                    }
+                    addressPoll = poll
+                    poll.run()
+                } },
+                onFailed = { deliver { onLocation(VehicleLocation()); onNavigation(null, false) } },
             )
         } catch (exception: RuntimeException) {
             Log.w("Departure", "Navigation service unavailable", exception)
+            onLocation(VehicleLocation())
             onNavigation(null, false)
         }
 
-        if (car == null || context.checkSelfPermission(Car.PERMISSION_SPEED) != PackageManager.PERMISSION_GRANTED) {
+        if (car == null) {
             publishSpeed(null)
+            onParked(null)
             return
         }
         try {
             val manager = car.getCarManager(Car.PROPERTY_SERVICE) as? CarPropertyManager
-            if (manager?.getCarPropertyConfig(VehiclePropertyIds.PERF_VEHICLE_SPEED) == null) {
+            if (manager == null) {
                 publishSpeed(null)
+                onParked(null)
                 return
             }
             properties = manager
             val callback = object : CarPropertyManager.CarPropertyEventCallback {
                 override fun onChangeEvent(value: CarPropertyValue<*>) = deliver {
-                    if (value.propertyId == VehiclePropertyIds.PERF_VEHICLE_SPEED) {
-                        publishSpeed(if (value.status == CarPropertyValue.STATUS_AVAILABLE) value.value as? Float else null)
+                    val available = value.status == CarPropertyValue.STATUS_AVAILABLE
+                    when (value.propertyId) {
+                        VehiclePropertyIds.PERF_VEHICLE_SPEED -> publishSpeed(if (available) value.value as? Float else null)
+                        VehiclePropertyIds.GEAR_SELECTION -> publishGear(if (available) value.value as? Int else null)
                     }
                 }
                 override fun onErrorEvent(propertyId: Int, areaId: Int) = deliver {
                     if (propertyId == VehiclePropertyIds.PERF_VEHICLE_SPEED) publishSpeed(null)
+                    if (propertyId == VehiclePropertyIds.GEAR_SELECTION) onParked(null)
                 }
             }
-            speedListener = callback
-            if (!manager.registerCallback(callback, VehiclePropertyIds.PERF_VEHICLE_SPEED, CarPropertyManager.SENSOR_RATE_UI)) {
+            propertyListener = callback
+            try {
+                if (context.checkSelfPermission(Car.PERMISSION_SPEED) != PackageManager.PERMISSION_GRANTED ||
+                    manager.getCarPropertyConfig(VehiclePropertyIds.PERF_VEHICLE_SPEED) == null ||
+                    !manager.registerCallback(callback, VehiclePropertyIds.PERF_VEHICLE_SPEED, CarPropertyManager.SENSOR_RATE_UI)) {
+                    publishSpeed(null)
+                }
+            } catch (exception: RuntimeException) {
+                Log.w("Departure", "Vehicle speed unavailable", exception)
                 publishSpeed(null)
             }
+            try {
+                if (context.checkSelfPermission(Car.PERMISSION_POWERTRAIN) != PackageManager.PERMISSION_GRANTED ||
+                    manager.getCarPropertyConfig(VehiclePropertyIds.GEAR_SELECTION) == null ||
+                    !manager.registerCallback(callback, VehiclePropertyIds.GEAR_SELECTION, CarPropertyManager.SENSOR_RATE_ONCHANGE)) {
+                    onParked(null)
+                } else {
+                    val initial = manager.getProperty<Int>(VehiclePropertyIds.GEAR_SELECTION, 0)
+                    publishGear(if (initial?.status == CarPropertyValue.STATUS_AVAILABLE) initial.value else null)
+                }
+            } catch (exception: RuntimeException) {
+                Log.w("Departure", "Vehicle gear unavailable", exception)
+                onParked(null)
+            }
         } catch (exception: RuntimeException) {
-            Log.w("Departure", "Vehicle speed unavailable", exception)
+            Log.w("Departure", "Vehicle properties unavailable", exception)
             publishSpeed(null)
+            onParked(null)
         }
     }
 
     private fun publishSpeed(value: Float?) {
         val speed = value?.takeIf { it.isFinite() }
         onSpeed(speed)
+    }
+
+    private fun publishGear(value: Int?) {
+        onParked(value?.takeIf { it != VehicleGear.GEAR_UNKNOWN }?.let { it == VehicleGear.GEAR_PARK })
     }
 
     private fun startSafety(deliver: (() -> Unit) -> Unit) {
@@ -224,6 +310,9 @@ internal class DepartureVehicleSource(
 
     fun stop() {
         generation++
+        destinationChangePending = false
+        addressPoll?.let(main::removeCallbacks)
+        addressPoll = null
         safetyCleanup.forEach { cleanup ->
             try { cleanup() } catch (exception: RuntimeException) {
                 Log.w("Departure", "Safety service disconnected before cleanup", exception)
@@ -234,15 +323,18 @@ internal class DepartureVehicleSource(
             Log.w("Departure", "Vehicle service disconnected before cleanup", exception)
         } finally { vehicle = null }
         try {
-            speedListener?.let { properties?.unregisterCallback(it) }
+            propertyListener?.let { properties?.unregisterCallback(it) }
         } catch (exception: RuntimeException) {
             Log.w("Departure", "Speed service disconnected before cleanup", exception)
         } finally {
-            speedListener = null
+            propertyListener = null
             properties = null
         }
-        try { navi?.release() } catch (exception: RuntimeException) {
+        try {
+            try { naviListener?.let { navi?.removeListener(it) } }
+            finally { navi?.release() }
+        } catch (exception: RuntimeException) {
             Log.w("Departure", "Navigation service disconnected before cleanup", exception)
-        } finally { navi = null }
+        } finally { navi = null; naviListener = null }
     }
 }

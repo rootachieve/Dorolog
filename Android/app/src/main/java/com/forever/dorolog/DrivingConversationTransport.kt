@@ -16,9 +16,15 @@ import java.util.concurrent.TimeUnit
 /**
  * Backend contract v1 (WSS only; this app contains no provider credentials).
  * Client JSON: session.start { protocol_version:1, session_id?:string, topic_id:string,
- * question:string, destination_name?:string, audio:{encoding:"pcm_s16le",sample_rate_hz:24000,
+ * question:string, destination_name?:string, trip_id:string,
+ * current_address?:string, latitude?:number, longitude?:number,
+ * audio:{encoding:"pcm_s16le",sample_rate_hz:24000,
  * channels:1,frame_duration_ms:20} }; response.create { reason:"silence",silence_ms:30000 };
  * response.cancel {}. Client binary messages are microphone PCM (normally 960 bytes / 20 ms).
+ * location.changed {trip_id:string,current_address:string|null,
+ * latitude:number|null,longitude:number|null} precedes PCM recorded at the updated location.
+ * Null clears an unavailable value. SDK coordinates are sent only as a valid pair.
+ * The server associates all PCM with the connection's trip and latest location.
  * A new input speech event must also cancel a pending silence response before response.started,
  * including generation already accepted by the server; cancelled output must never be emitted.
  * Server JSON: session.ready {session_id:string}; response.started {response_id:string};
@@ -58,12 +64,20 @@ internal class DrivingConversationTransport(
     private var generation = 0
     private var ready = false
     private var responseId: String? = null
+    private var tripId: String? = null
+    private var location = VehicleLocation()
+    private var sentLocation = VehicleLocation()
 
-    fun connect(topic: RecommendedTopic, destination: Destination?, sessionId: String?) {
+    fun connect(topic: RecommendedTopic, destination: Destination?, sessionId: String?,
+        tripId: String, currentAddress: String? = null,
+        latitude: Double? = null, longitude: Double? = null) {
         synchronized(lock) {
             closeLocked()
+            this.tripId = tripId
+            location = validLocation(VehicleLocation(currentAddress, latitude, longitude))
             val connection = generation
             val request = try {
+                require(tripId.isNotBlank())
                 val uri = URI(endpoint)
                 require(uri.scheme == "wss" && !uri.host.isNullOrBlank() &&
                     uri.userInfo == null && uri.fragment == null)
@@ -77,14 +91,20 @@ internal class DrivingConversationTransport(
                     override fun onOpen(webSocket: WebSocket, response: Response) {
                         synchronized(lock) {
                             if (connection != generation) return
-                            val start = mapOf(
+                            val start = gson.toJsonTree(mapOf(
                                 "type" to "session.start", "protocol_version" to 1,
                                 "session_id" to sessionId, "topic_id" to topic.id,
                                 "question" to topic.question, "destination_name" to destination?.name,
+                                "trip_id" to tripId,
                                 "audio" to mapOf("encoding" to "pcm_s16le", "sample_rate_hz" to 24_000,
                                     "channels" to 1, "frame_duration_ms" to 20),
-                            )
-                            if (!webSocket.send(gson.toJson(start))) failLocked("음성 서버에 연결할 수 없어요")
+                            ).filterValues { it != null }).asJsonObject.apply {
+                                addProperty("current_address", location.address)
+                                addProperty("latitude", location.latitude)
+                                addProperty("longitude", location.longitude)
+                            }
+                            if (!webSocket.send(start.toString())) failLocked("음성 서버에 연결할 수 없어요")
+                            else sentLocation = location
                         }
                     }
 
@@ -131,6 +151,36 @@ internal class DrivingConversationTransport(
         }
     }
 
+    fun updateLocation(location: VehicleLocation) {
+        synchronized(lock) {
+            this.location = validLocation(location)
+            if (ready) sendLocationIfChanged()
+        }
+    }
+
+    private fun sendLocationIfChanged(): Boolean {
+        if (sentLocation == location) return true
+        val message = JsonObject().apply {
+            addProperty("type", "location.changed")
+            tripId?.let { addProperty("trip_id", it) }
+            addProperty("current_address", location.address)
+            addProperty("latitude", location.latitude)
+            addProperty("longitude", location.longitude)
+        }
+        if (!sendControl(message.toString())) return false
+        sentLocation = location
+        return true
+    }
+
+    private fun validLocation(location: VehicleLocation): VehicleLocation {
+        val validCoordinates = location.latitude?.let { it.isFinite() && it in -90.0..90.0 } == true &&
+            location.longitude?.let { it.isFinite() && it in -180.0..180.0 } == true
+        return VehicleLocation(
+            location.address?.trim()?.takeIf { it.isNotEmpty() && it.length <= 1_000 },
+            location.latitude.takeIf { validCoordinates }, location.longitude.takeIf { validCoordinates },
+        )
+    }
+
     fun sendAudio(pcm: ByteArray): Boolean = synchronized(lock) {
         if (!ready || pcm.isEmpty() || pcm.size > 960 || pcm.size % 2 != 0) return false
         val connection = socket ?: return false
@@ -164,6 +214,7 @@ internal class DrivingConversationTransport(
                     return
                 }
                 ready = true
+                if (!sendLocationIfChanged()) return
                 listener.onReady(id)
             }
             "input.speech_started", "input.speech_stopped" -> {
@@ -201,10 +252,11 @@ internal class DrivingConversationTransport(
         }
     }
 
-    private fun sendControl(message: Map<String, Any>): Boolean {
+    private fun sendControl(message: Map<String, Any>): Boolean = sendControl(gson.toJson(message))
+
+    private fun sendControl(text: String): Boolean {
         val connection = socket ?: return false
-        val text = gson.toJson(message)
-        if (connection.queueSize() + text.length > MAX_QUEUED_BYTES || !connection.send(text)) {
+        if (connection.queueSize() + text.toByteArray(Charsets.UTF_8).size > MAX_QUEUED_BYTES || !connection.send(text)) {
             failLocked("음성 서버에 요청을 보낼 수 없어요")
             return false
         }

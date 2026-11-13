@@ -9,6 +9,7 @@ import retrofit2.http.Url
 
 data class RecommendedTopic(val id: String, val question: String)
 data class Destination(val name: String)
+data class VehicleLocation(val address: String? = null, val latitude: Double? = null, val longitude: Double? = null)
 
 data class RecommendationRequestDto(
     @SerializedName("destinationName") val destinationName: String?,

@@ -15,8 +15,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 
@@ -113,19 +114,27 @@ internal fun DorologApp(
     animationsEnabled: Boolean = true,
     car: Car? = null,
     transitionAnimationsEnabled: Boolean = animationsEnabled,
+    selectedTripId: String? = null,
 ) {
-    var screen by rememberSaveable { mutableStateOf(Screen.Main) }
+    var screen by remember { mutableStateOf(Screen.Main) }
+    var activeTripId by remember { mutableStateOf<String?>(null) }
+    val tripId = selectedTripId?.takeIf { it.isNotBlank() }
+    val returnHome = { activeTripId = null; screen = Screen.Main }
     BackHandler {
-        if (screen == Screen.Main) onBackground() else screen = Screen.Main
+        if (screen == Screen.Main) onBackground() else returnHome()
     }
     when (screen) {
         Screen.Main -> MainScreen(
-            onStart = { screen = Screen.Departure },
+            onStart = { if (tripId != null) { activeTripId = tripId; screen = Screen.Departure } },
             onArchive = { screen = Screen.Archive },
             modifier = modifier,
             animationsEnabled = animationsEnabled,
+            startEnabled = tripId != null,
         )
-        Screen.Departure -> DepartureRoute(onBack = { screen = Screen.Main }, modifier = modifier, animationsEnabled = transitionAnimationsEnabled, car = car)
-        Screen.Archive -> ArchiveScreen(onBack = { screen = Screen.Main }, modifier = modifier)
+        Screen.Departure -> key(activeTripId) {
+            DepartureRoute(tripId = checkNotNull(activeTripId), onBack = returnHome,
+                modifier = modifier, animationsEnabled = transitionAnimationsEnabled, car = car)
+        }
+        Screen.Archive -> ArchiveScreen(onBack = returnHome, modifier = modifier)
     }
 }
