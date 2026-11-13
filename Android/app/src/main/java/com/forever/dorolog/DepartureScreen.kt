@@ -549,18 +549,6 @@ private fun SkippedRecordingScreen(destination: Destination?, onResume: () -> Un
     }
 }
 
-// Separate worktree supplies the settlement content; keep this trip ID at the route boundary.
-@Composable
-internal fun TripSummaryScreen(tripId: String, onDone: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxSize().clip(RoundedCornerShape(40.dp)).background(Color(0xFFF8FAFE))
-        .padding(32.dp).testTag("settlement-screen"), horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically)) {
-        Text("여행 결산", fontFamily = DepartureFont, fontSize = 36.sp)
-        Text("여행이 종료되었어요", fontFamily = DepartureFont, fontSize = 24.sp)
-        Button(onClick = onDone, modifier = Modifier.heightIn(min = 48.dp)) { Text("홈으로") }
-    }
-}
-
 @Preview(name = "추천 질문", widthDp = 850, heightDp = 592)
 @Preview(name = "추천 질문 세로", widthDp = 360, heightDp = 640)
 @Composable
