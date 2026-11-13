@@ -1,6 +1,6 @@
-from typing import Optional
+from typing import Annotated, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 
 class TopicRequest(BaseModel):
@@ -27,7 +27,6 @@ class RecordingStartRequest(BaseModel):
 
 
 class TranscriptRequest(BaseModel):
-    speaker: str
     text: str
 
 
@@ -67,16 +66,13 @@ class FollowupSuggestion(BaseModel):
     )
 
 
-class WantedPlace(BaseModel):
-    name: str = Field(
-        description="가보고 싶다고 말한 장소 이름",
+class CurrentStoryTitle(BaseModel):
+    title: str = Field(
+        description="주행 화면에 표시할 현재 이야기의 짧은 한 줄 제목",
     )
-    speaker: str = Field(
-        description="해당 장소에 가보고 싶다고 말한 사람",
-    )
-    reason: str = Field(
-        description="그 장소에서 하고 싶다고 말한 일을 한 문장으로 정리한 내용",
-    )
+
+
+ShortHighlight = Annotated[str, StringConstraints(max_length=25)]
 
 
 class Story(BaseModel):
@@ -86,11 +82,9 @@ class Story(BaseModel):
     summary: str = Field(
         description="대화에서 확인된 내용만 담은 이야기 요약",
     )
-    speakers: list[str] = Field(
-        description="이야기에 참여한 사람 이름",
-    )
-    wanted_places: list[WantedPlace] = Field(
-        description="이야기에서 가보고 싶다고 말한 장소. 없으면 빈 목록",
+    highlights: list[ShortHighlight] = Field(
+        max_length=3,
+        description="화면에 표시할 25자 이내 핵심 대화. 최대 3개이며 없으면 빈 목록",
     )
 
 

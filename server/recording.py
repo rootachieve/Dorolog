@@ -1,8 +1,8 @@
 from datetime import datetime
 from uuid import uuid4
 
-from .llm import organize_conversation
-from .schemas import ConversationSummary
+from .llm import create_current_story_title, organize_conversation
+from .schemas import ConversationSummary, CurrentStoryTitle
 
 
 # MVP에서는 실행 중인 기록을 메모리에 보관한다.
@@ -28,33 +28,45 @@ def start_recording(destination: str, topic: str) -> dict:
     return recording
 
 
-def add_transcript(recording_id: str, speaker: str, text: str) -> dict:
+def add_transcript(recording_id: str, text: str) -> dict:
     """음성 인식으로 들어온 발화 한 문장을 현재 기록에 추가한다."""
     recording = recordings[recording_id]
     if recording["status"] != "recording":
         raise ValueError("이미 종료된 기록에는 대화를 추가할 수 없습니다.")
 
-    transcript = {
-        "speaker": speaker,
-        "text": text,
-    }
+    transcript = {"text": text}
     recording["pending_transcript"].append(transcript)
 
     return transcript
 
 
-def preview_current_story(recording_id: str) -> ConversationSummary:
-    """아직 저장하지 않은 대화를 정리하되 기록 상태는 변경하지 않는다."""
+def preview_current_story(recording_id: str) -> CurrentStoryTitle:
+    """아직 저장하지 않은 대화의 현재 제목을 만들되 기록 상태는 변경하지 않는다."""
     recording = recordings[recording_id]
     if recording["status"] != "recording":
         raise ValueError("이미 종료된 기록은 미리 볼 수 없습니다.")
 
     if not recording["pending_transcript"]:
+        return CurrentStoryTitle(title="")
+
+    conversation = "\n".join(
+        item["text"] for item in recording["pending_transcript"]
+    )
+
+    return create_current_story_title(conversation)
+
+
+def get_story_candidates(recording_id: str) -> ConversationSummary:
+    """정차 중 고를 이야기 후보를 만들되 기록을 저장하거나 비우지 않는다."""
+    recording = recordings[recording_id]
+    if recording["status"] != "recording":
+        raise ValueError("이미 종료된 기록에서는 이야기 후보를 만들 수 없습니다.")
+
+    if not recording["pending_transcript"]:
         return ConversationSummary(stories=[])
 
     conversation = "\n".join(
-        f'{item["speaker"]}: {item["text"]}'
-        for item in recording["pending_transcript"]
+        item["text"] for item in recording["pending_transcript"]
     )
 
     return organize_conversation(conversation)
@@ -70,8 +82,7 @@ def save_current_story(recording_id: str) -> list[dict]:
         return []
 
     conversation = "\n".join(
-        f'{item["speaker"]}: {item["text"]}'
-        for item in recording["pending_transcript"]
+        item["text"] for item in recording["pending_transcript"]
     )
     summary = organize_conversation(conversation)
     new_stories = [story.model_dump() for story in summary.stories]

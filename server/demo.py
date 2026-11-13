@@ -47,8 +47,6 @@ if not summary_result.stories:
 for number, story in enumerate(summary_result.stories, start=1):
     print(f"\n{number}. {story.title}")
     print(f"요약: {story.summary}")
-    print(f"참여자: {', '.join(story.speakers)}")
-
-    for place in story.wanted_places:
-        print(f"가보고 싶은 곳: {place.name} · {place.speaker} · {place.reason}")
+    for highlight in story.highlights:
+        print(f"핵심 대화: {highlight}")
 

@@ -4,12 +4,14 @@ from fastapi.responses import JSONResponse
 from .llm import create_first_question, create_followup_question, recommend_topics
 from .recording import (
     add_transcript,
+    get_story_candidates,
     preview_current_story,
-    save_current_story,
     start_recording,
     stop_recording,
 )
 from .schemas import (
+    ConversationSummary,
+    CurrentStoryTitle,
     FirstQuestion,
     FirstQuestionRequest,
     FollowupQuestionRequest,
@@ -67,17 +69,20 @@ def create_recording(request: RecordingStartRequest):
 
 @app.post("/recordings/{recording_id}/transcripts")
 def append_transcript(recording_id: str, request: TranscriptRequest):
-    return add_transcript(recording_id, request.speaker, request.text)
+    return add_transcript(recording_id, request.text)
 
 
-@app.post("/recordings/{recording_id}/preview")
+@app.post("/recordings/{recording_id}/preview", response_model=CurrentStoryTitle)
 def preview_story(recording_id: str):
     return preview_current_story(recording_id)
 
 
-@app.post("/recordings/{recording_id}/stories")
-def save_story(recording_id: str):
-    return {"stories": save_current_story(recording_id)}
+@app.post(
+    "/recordings/{recording_id}/stories",
+    response_model=ConversationSummary,
+)
+def story_candidates(recording_id: str):
+    return get_story_candidates(recording_id)
 
 
 @app.post("/recordings/{recording_id}/stop")
