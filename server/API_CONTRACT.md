@@ -25,7 +25,7 @@ Android 빌드 설정:
 | 새로 시작 | `POST /api/trips` | 새 여행 ID 발급 |
 | 최근 주행 화면 | `GET /api/trips?limit=6` | 최근 여행 카드 표시 |
 | 이어가기 | `POST /api/trips/{tripId}/resume` | 기존 여행을 다시 활성화 |
-| 질문 화면 진입 | `POST /api/trips/{tripId}/topics` | 여행의 목적지를 반영한 추천 질문 4개 조회 |
+| 질문 화면 진입 | `POST /api/trips/{tripId}/topics` | 현재 내비게이션 목적지 갱신 후 추천 질문 4개 조회 |
 | 대화 시작 | `WSS /conversation` | PCM 전송, STT·VAD·후속 질문·TTS |
 | 정차 화면 진입 | `GET /api/trips/{tripId}/stories` | 남은 대화 정리 후 이야기 후보 조회 |
 | 이야기 저장 | `PUT /api/trips/{tripId}/saved-stories` | 남길 이야기 전체 선택 결과 저장 |
@@ -48,6 +48,7 @@ POST /api/trips
   "originLatitude": 37.5665,
   "originLongitude": 126.978,
   "destinationName": "부산",
+  "destinationAddress": "부산광역시 동구",
   "destinationLatitude": 35.1796,
   "destinationLongitude": 129.0756
 }
@@ -62,6 +63,7 @@ POST /api/trips
   "originLatitude": 37.5665,
   "originLongitude": 126.978,
   "destinationName": "부산",
+  "destinationAddress": "부산광역시 동구",
   "destinationLatitude": 35.1796,
   "destinationLongitude": 129.0756,
   "status": "active",
@@ -115,9 +117,29 @@ POST /api/trips/{tripId}/resume
 POST /api/trips/{tripId}/topics
 ```
 
-요청 본문은 없다. 서버가 `{tripId}`에 저장된 내비게이션 목적지를 사용한다.
-목적지가 있으면 목적지 관련 질문 2개와 가족 여행 질문 2개를 반환하고,
-목적지가 없는 여행이면 가족 관련 질문 4개를 반환한다.
+현재 내비게이션 목적지를 보낸다. `name`은 화면에 표시할 장소명이고
+`address`는 내비게이션이 제공한 주소 문자열이다.
+
+```json
+{
+  "destination": {
+    "name": "부산역",
+    "address": "부산광역시 동구 중앙대로 206",
+    "latitude": 35.1151,
+    "longitude": 129.0414
+  }
+}
+```
+
+서버는 받은 값으로 `{tripId}`의 현재 목적지를 갱신한 뒤 추천 질문을 만든다.
+목적지가 있으면 목적지 관련 질문 2개와 가족 여행 질문 2개를 반환한다.
+
+내비게이션 목적지가 없으면 아래처럼 `null`로 보낸다. 서버는 이전 현재 목적지를 비우고
+가족 관련 질문 4개를 반환한다.
+
+```json
+{ "destination": null }
+```
 
 ```json
 {

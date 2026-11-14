@@ -88,6 +88,27 @@ SessionText = Annotated[
 ]
 
 
+class TopicDestination(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: NonEmptyText
+    address: str = Field(default="", max_length=1000)
+    latitude: Optional[float] = Field(default=None, ge=-90.0, le=90.0)
+    longitude: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
+
+    @model_validator(mode="after")
+    def validate_coordinate_pair(self):
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("위도와 경도는 함께 보내야 합니다.")
+        return self
+
+
+class TripTopicsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    destination: Optional[TopicDestination] = None
+
+
 class ConversationAudioFormat(BaseModel):
     encoding: Literal["pcm_s16le"]
     sample_rate_hz: Literal[24000]
@@ -242,6 +263,11 @@ class TripCreateRequest(BaseModel):
         default=None,
         alias="destinationName",
     )
+    destination_address: Optional[str] = Field(
+        default=None,
+        alias="destinationAddress",
+        max_length=1000,
+    )
     destination_latitude: Optional[float] = Field(
         default=None,
         alias="destinationLatitude",
@@ -272,6 +298,7 @@ class TripResponse(BaseModel):
     origin_latitude: Optional[float] = Field(alias="originLatitude")
     origin_longitude: Optional[float] = Field(alias="originLongitude")
     destination_name: Optional[str] = Field(alias="destinationName")
+    destination_address: Optional[str] = Field(alias="destinationAddress")
     destination_latitude: Optional[float] = Field(alias="destinationLatitude")
     destination_longitude: Optional[float] = Field(alias="destinationLongitude")
     status: Literal["active", "finished"]

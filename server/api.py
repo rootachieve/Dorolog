@@ -14,6 +14,7 @@ from .recording.database import (
     mark_trip_finished,
     replace_saved_story_ids,
     resume_trip,
+    update_trip_destination,
     upsert_story,
 )
 from .voice.conversation import run_conversation
@@ -42,6 +43,7 @@ from .schemas import (
     SavedStoriesRequest,
     StoryMapResponse,
     TopicRecommendations,
+    TripTopicsRequest,
     TranscriptRequest,
     TripCreateRequest,
     TripDetailResponse,
@@ -98,6 +100,7 @@ def create_new_trip(request: TripCreateRequest):
         origin_latitude=request.origin_latitude,
         origin_longitude=request.origin_longitude,
         destination_name=request.destination_name,
+        destination_address=request.destination_address,
         destination_latitude=request.destination_latitude,
         destination_longitude=request.destination_longitude,
     )
@@ -138,8 +141,15 @@ def continue_trip(trip_id: str):
     "/api/trips/{trip_id}/topics",
     response_model=TopicRecommendations,
 )
-def trip_topics(trip_id: str):
-    trip = get_trip(trip_id)
+def trip_topics(trip_id: str, request: TripTopicsRequest):
+    destination = request.destination
+    trip = update_trip_destination(
+        trip_id=trip_id,
+        destination_name=destination.name if destination else None,
+        destination_address=destination.address if destination else None,
+        destination_latitude=destination.latitude if destination else None,
+        destination_longitude=destination.longitude if destination else None,
+    )
     if trip is None:
         raise HTTPException(status_code=404, detail="여행을 찾을 수 없습니다.")
     return recommend_topics(trip["destination_name"])

@@ -59,7 +59,7 @@ Android 연결용 전체 요청·응답 규격은 [`server/API_CONTRACT.md`](ser
 | GET | `/health` | `health()` | 서버 실행 상태 |
 | POST | `/api/trips` | `create_trip()` | 새 여행 생성과 여행 ID 발급 |
 | GET | `/api/trips?limit=6` | `list_recent_trips()` | 최근 사용한 여행 목록 |
-| POST | `/api/trips/{trip_id}/topics` | `get_trip()`, `recommend_topics()` | 여행의 목적지를 반영한 추천 질문 4개 |
+| POST | `/api/trips/{trip_id}/topics` | `update_trip_destination()`, `recommend_topics()` | 현재 목적지 갱신 후 추천 질문 4개 |
 | GET | `/api/stories/map` | `get_story_map()` | 전국 지도의 이야기·여행 수와 지역별 이야기 조회 |
 | GET | `/api/trips/{trip_id}` | `get_trip()`, `list_stories()` | 여행 정보와 전체 이야기 조회 |
 | POST | `/api/trips/{trip_id}/resume` | `resume_trip()` | 기존 여행 이어가기 |

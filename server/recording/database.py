@@ -31,6 +31,7 @@ def initialize_database(database_path: Path = DATABASE_PATH) -> None:
                 origin_latitude REAL,
                 origin_longitude REAL,
                 destination_name TEXT,
+                destination_address TEXT,
                 destination_latitude REAL,
                 destination_longitude REAL,
                 status TEXT NOT NULL CHECK (status IN ('active', 'finished')),
@@ -99,6 +100,13 @@ def initialize_database(database_path: Path = DATABASE_PATH) -> None:
             """
         )
 
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(trips)").fetchall()
+        }
+        if "destination_address" not in columns:
+            connection.execute("ALTER TABLE trips ADD COLUMN destination_address TEXT")
+
 
 def trip_row_to_dict(row: sqlite3.Row) -> dict:
     return {
@@ -107,6 +115,7 @@ def trip_row_to_dict(row: sqlite3.Row) -> dict:
         "origin_latitude": row["origin_latitude"],
         "origin_longitude": row["origin_longitude"],
         "destination_name": row["destination_name"],
+        "destination_address": row["destination_address"],
         "destination_latitude": row["destination_latitude"],
         "destination_longitude": row["destination_longitude"],
         "status": row["status"],
@@ -121,6 +130,7 @@ def create_trip(
     origin_latitude: Optional[float] = None,
     origin_longitude: Optional[float] = None,
     destination_name: Optional[str] = None,
+    destination_address: Optional[str] = None,
     destination_latitude: Optional[float] = None,
     destination_longitude: Optional[float] = None,
     database_path: Path = DATABASE_PATH,
@@ -130,15 +140,17 @@ def create_trip(
     now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
     origin_name = origin_name.strip() or "위치 정보 없음"
     destination_name = destination_name.strip() if destination_name else None
+    destination_address = destination_address.strip() if destination_address else None
 
     with connect_database(database_path) as connection:
         connection.execute(
             """
             INSERT INTO trips (
                 trip_id, origin_name, origin_latitude, origin_longitude,
-                destination_name, destination_latitude, destination_longitude,
+                destination_name, destination_address,
+                destination_latitude, destination_longitude,
                 status, started_at, ended_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?)
             """,
             (
                 trip_id,
@@ -146,6 +158,7 @@ def create_trip(
                 origin_latitude,
                 origin_longitude,
                 destination_name,
+                destination_address,
                 destination_latitude,
                 destination_longitude,
                 now,
@@ -163,6 +176,7 @@ def ensure_trip(
     origin_latitude: Optional[float] = None,
     origin_longitude: Optional[float] = None,
     destination_name: Optional[str] = None,
+    destination_address: Optional[str] = None,
     destination_latitude: Optional[float] = None,
     destination_longitude: Optional[float] = None,
     database_path: Path = DATABASE_PATH,
@@ -171,15 +185,17 @@ def ensure_trip(
     now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
     origin_name = origin_name.strip() or "위치 정보 없음"
     destination_name = destination_name.strip() if destination_name else None
+    destination_address = destination_address.strip() if destination_address else None
 
     with connect_database(database_path) as connection:
         connection.execute(
             """
             INSERT INTO trips (
                 trip_id, origin_name, origin_latitude, origin_longitude,
-                destination_name, destination_latitude, destination_longitude,
+                destination_name, destination_address,
+                destination_latitude, destination_longitude,
                 status, started_at, ended_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?)
             ON CONFLICT (trip_id) DO UPDATE SET
                 origin_name = CASE
                     WHEN trips.origin_name = '위치 정보 없음'
@@ -190,6 +206,7 @@ def ensure_trip(
                 origin_latitude = COALESCE(trips.origin_latitude, excluded.origin_latitude),
                 origin_longitude = COALESCE(trips.origin_longitude, excluded.origin_longitude),
                 destination_name = COALESCE(excluded.destination_name, trips.destination_name),
+                destination_address = COALESCE(excluded.destination_address, trips.destination_address),
                 destination_latitude = COALESCE(excluded.destination_latitude, trips.destination_latitude),
                 destination_longitude = COALESCE(excluded.destination_longitude, trips.destination_longitude),
                 updated_at = excluded.updated_at
@@ -200,6 +217,7 @@ def ensure_trip(
                 origin_latitude,
                 origin_longitude,
                 destination_name,
+                destination_address,
                 destination_latitude,
                 destination_longitude,
                 now,
@@ -208,6 +226,43 @@ def ensure_trip(
             ),
         )
 
+    return get_trip(trip_id, database_path)
+
+
+def update_trip_destination(
+    trip_id: str,
+    destination_name: Optional[str],
+    destination_address: Optional[str] = None,
+    destination_latitude: Optional[float] = None,
+    destination_longitude: Optional[float] = None,
+    database_path: Path = DATABASE_PATH,
+) -> Optional[dict]:
+    """추천 질문에 사용할 현재 목적지를 갱신한다."""
+    now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+    destination_name = destination_name.strip() if destination_name else None
+    destination_address = destination_address.strip() if destination_address else None
+
+    with connect_database(database_path) as connection:
+        cursor = connection.execute(
+            """
+            UPDATE trips
+            SET destination_name = ?, destination_address = ?,
+                destination_latitude = ?, destination_longitude = ?,
+                updated_at = ?
+            WHERE trip_id = ?
+            """,
+            (
+                destination_name,
+                destination_address,
+                destination_latitude,
+                destination_longitude,
+                now,
+                trip_id,
+            ),
+        )
+
+    if cursor.rowcount == 0:
+        return None
     return get_trip(trip_id, database_path)
 
 
