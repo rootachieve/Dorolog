@@ -213,45 +213,50 @@ class DorologAppTest {
         compose.onNodeWithTag("departure-screen").assertDoesNotExist()
     }
 
-    @Test fun archiveSummaryRequestsChosenId_andBothBackActionsRetainMapFilterSortAndScroll() {
+    @Test fun archiveMapDetailsStayInline_andBothBackActionsReturnOverviewWithoutLoadingSummary() {
         val archiveRequests = CopyOnWriteArrayList<ArchiveSort>()
         val summaryRequests = CopyOnWriteArrayList<String>()
         setArchiveApp(archiveRequests, summaryRequests)
         openScreen("이야기 보관함", "archive-screen")
         showOldestBusanTrips()
-        val lastTrip = "archive-map-story-server-story-12"
-        compose.onNodeWithTag("archive-region-trips").performScrollToNode(hasTestTag(lastTrip))
+        val lastStory = "archive-map-story-server-story-12"
         repeat(2) { pass ->
-            compose.onNodeWithTag(lastTrip).assertIsDisplayed().performClick()
-            compose.onNodeWithTag("settlement-screen").assertIsDisplayed()
-            compose.onNodeWithContentDescription("1번 이야기, 부산, 저장된 이야기").assertIsDisplayed()
-            compose.runOnIdle { assertEquals(List(pass + 1) { "server-trip-12" }, summaryRequests.toList()) }
-            if (pass == 0) compose.onNodeWithText("‹ 뒤로").performClick()
+            compose.onNodeWithTag("archive-region-trips").performScrollToNode(hasTestTag(lastStory))
+            compose.onNodeWithTag(lastStory).assertIsDisplayed()
+            compose.onNodeWithText("여행 12").assertIsDisplayed()
+            compose.onNodeWithText("목록으로").assertIsDisplayed()
+            compose.onNodeWithText("오래된순").assertDoesNotExist()
+            compose.onNodeWithTag("settlement-screen").assertDoesNotExist()
+            compose.onNodeWithTag("archive-map-story-server-story-14").assertDoesNotExist()
+            if (pass == 0) compose.onNodeWithText("목록으로").performClick()
             else compose.runOnIdle { backDispatcher.onBackPressed() }
             compose.onNodeWithTag("archive-region-trips").assertIsDisplayed()
             compose.onNodeWithText("오래된순").assertIsDisplayed()
-            compose.onNodeWithText("부산").assertIsDisplayed()
-            compose.onNodeWithText("전체 이야기").assertIsDisplayed()
-            compose.onNodeWithTag(lastTrip).assertIsDisplayed()
-            compose.onNodeWithTag("archive-map-story-server-story-14").assertDoesNotExist()
-            compose.runOnIdle { assertEquals(listOf(ArchiveSort.Latest), archiveRequests.toList()) }
+            compose.onNodeWithText("목록으로").assertDoesNotExist()
+            compose.onNodeWithTag("archive-map-story-server-story-1").assertIsDisplayed()
+            compose.runOnIdle {
+                assertEquals(listOf(ArchiveSort.Latest), archiveRequests.toList())
+                assertEquals(emptyList<String>(), summaryRequests.toList())
+            }
+            if (pass == 0) compose.onNodeWithTag("archive-map-story-server-story-1").performClick()
         }
     }
 
-    @Test fun archiveSummaryConfirmationReturnsHome_andNextArchiveEntryHasFreshStateAndRequest() {
+    @Test fun archiveTripSummaryConfirmationReturnsHome_andNextArchiveEntryHasFreshStateAndRequest() {
         val archiveRequests = CopyOnWriteArrayList<ArchiveSort>()
         val summaryRequests = CopyOnWriteArrayList<String>()
         setArchiveApp(archiveRequests, summaryRequests)
         openScreen("이야기 보관함", "archive-screen")
-        showOldestBusanTrips()
-        compose.onNodeWithTag("archive-map-story-server-story-1").performClick()
+        compose.onNodeWithText("최신순").performClick()
+        compose.onNodeWithText("오래된순").performClick()
+        compose.onNodeWithTag("archive-trip-server-trip-1").performClick()
         compose.onNodeWithTag("settlement-screen").assertIsDisplayed()
         compose.onNodeWithText("확인").performClick()
         assertMainReady()
         openScreen("이야기 보관함", "archive-screen")
         compose.onNodeWithTag("archive-trip-grid").assertIsDisplayed()
         compose.onNodeWithText("최신순").assertIsDisplayed()
-        compose.onNodeWithText("전체 이야기").assertDoesNotExist()
+        compose.onNodeWithText("목록으로").assertDoesNotExist()
         compose.runOnIdle {
             assertEquals(listOf(ArchiveSort.Latest, ArchiveSort.Latest), archiveRequests.toList())
             assertEquals(listOf("server-trip-1"), summaryRequests.toList())
