@@ -4,14 +4,6 @@ from typing import Annotated, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 
-class TopicRequest(BaseModel):
-    destination_name: Optional[str] = Field(default=None, alias="destinationName")
-    previous_conversation_ids: list[str] = Field(
-        default_factory=list,
-        alias="previousConversationIds",
-    )
-
-
 class FirstQuestionRequest(BaseModel):
     destination: str
     topic: str

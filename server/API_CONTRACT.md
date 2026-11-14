@@ -25,7 +25,7 @@ Android 빌드 설정:
 | 새로 시작 | `POST /api/trips` | 새 여행 ID 발급 |
 | 최근 주행 화면 | `GET /api/trips?limit=6` | 최근 여행 카드 표시 |
 | 이어가기 | `POST /api/trips/{tripId}/resume` | 기존 여행을 다시 활성화 |
-| 질문 화면 진입 | `POST /api/topics` | 추천 질문 4개 조회 |
+| 질문 화면 진입 | `POST /api/trips/{tripId}/topics` | 여행의 목적지를 반영한 추천 질문 4개 조회 |
 | 대화 시작 | `WSS /conversation` | PCM 전송, STT·VAD·후속 질문·TTS |
 | 정차 화면 진입 | `GET /api/trips/{tripId}/stories` | 남은 대화 정리 후 이야기 후보 조회 |
 | 이야기 저장 | `PUT /api/trips/{tripId}/saved-stories` | 남길 이야기 전체 선택 결과 저장 |
@@ -112,22 +112,17 @@ POST /api/trips/{tripId}/resume
 ## 4. 추천 질문
 
 ```http
-POST /api/topics
+POST /api/trips/{tripId}/topics
 ```
 
-```json
-{
-  "destinationName": "부산 할머니댁",
-  "previousConversationIds": []
-}
-```
-
-목적지가 없으면 `destinationName`을 `null`로 보낸다.
+요청 본문은 없다. 서버가 `{tripId}`에 저장된 내비게이션 목적지를 사용한다.
+목적지가 있으면 목적지 관련 질문 2개와 가족 여행 질문 2개를 반환하고,
+목적지가 없는 여행이면 가족 관련 질문 4개를 반환한다.
 
 ```json
 {
   "topics": [
-    { "id": "destination_1", "question": "부산에서 가족과 가장 먼저 해보고 싶은 일은 무엇인가요?" },
+    { "id": "destination_1", "question": "부산역에 도착하면 가족과 가장 먼저 해보고 싶은 일은 무엇인가요?" },
     { "id": "destination_2", "question": "부산에서 함께 먹고 싶은 음식은 무엇인가요?" },
     { "id": "family_travel_1", "question": "다시 떠올리면 웃음 나는 가족 여행은 언제였나요?" },
     { "id": "family_travel_2", "question": "가족 여행에서 기억에 남는 한 끼는 무엇인가요?" }

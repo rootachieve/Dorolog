@@ -42,7 +42,6 @@ from .schemas import (
     SavedStoriesRequest,
     StoryMapResponse,
     TopicRecommendations,
-    TopicRequest,
     TranscriptRequest,
     TripCreateRequest,
     TripDetailResponse,
@@ -86,12 +85,6 @@ def health():
 @app.websocket("/conversation")
 async def conversation(websocket: WebSocket):
     await run_conversation(websocket)
-
-
-@app.post("/api/topics", response_model=TopicRecommendations)
-@app.post("/topics", response_model=TopicRecommendations)
-def topics(request: TopicRequest):
-    return recommend_topics(request.destination_name)
 
 
 @app.post(
@@ -139,6 +132,17 @@ def continue_trip(trip_id: str):
     if trip is None:
         raise HTTPException(status_code=404, detail="여행을 찾을 수 없습니다.")
     return trip
+
+
+@app.post(
+    "/api/trips/{trip_id}/topics",
+    response_model=TopicRecommendations,
+)
+def trip_topics(trip_id: str):
+    trip = get_trip(trip_id)
+    if trip is None:
+        raise HTTPException(status_code=404, detail="여행을 찾을 수 없습니다.")
+    return recommend_topics(trip["destination_name"])
 
 
 @app.post("/questions/first", response_model=FirstQuestion)
