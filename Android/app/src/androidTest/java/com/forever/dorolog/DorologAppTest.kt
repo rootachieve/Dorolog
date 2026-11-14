@@ -73,11 +73,11 @@ class DorologAppTest {
     }
 
     @Test
-    fun homeStartAlwaysOpensSelection_andOnlyChosenTripCanEnterRecording() {
-        val response = CompletableDeferred<TripIdResponseDto>()
-        val requests = CopyOnWriteArrayList<Pair<String, StartTripRequestDto>>()
-        setAppContent(selectionRepository { id, request ->
-            requests += id to request
+    fun finishedTripWaitsForResumeAcknowledgement_beforeEnteringQuestions() {
+        val response = CompletableDeferred<OngoingTripDto>()
+        val requests = CopyOnWriteArrayList<String>()
+        setAppContent(selectionRepository(status = "finished") { id ->
+            requests += id
             response.await()
         })
         compose.onNodeWithText("시작하기").assertIsDisplayed().assertIsEnabled()
@@ -85,38 +85,45 @@ class DorologAppTest {
         compose.onNodeWithText("새로 시작").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithTag("resume-selected-trip").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithTag("departure-screen").assertDoesNotExist()
-        seedSelectionContext()
         compose.onNodeWithTag("resume-selected-trip").performClick()
         compose.mainClock.advanceTimeByFrame()
-        compose.onNodeWithText("목적지 없이 시작").assertIsDisplayed()
-        compose.runOnIdle { assertEquals(0, requests.size) }
-        compose.onNodeWithTag("departure-screen").assertDoesNotExist()
-        seedSelectionContext()
-        compose.onNodeWithText("목적지 없이 시작").performClick()
-        compose.mainClock.advanceTimeByFrame()
-        compose.onNodeWithText("목적지 없이 시작").assertIsNotEnabled()
+        compose.onNodeWithText("목적지 없이 시작").assertDoesNotExist()
         compose.onNodeWithTag("trip-selection-screen").assertIsDisplayed()
         compose.onNodeWithTag("departure-screen").assertDoesNotExist()
         compose.runOnIdle {
-            assertEquals("selected-trip", requests.single().first)
-            assertNull(requests.single().second.destination)
-            assertEquals(37.56, requests.single().second.origin.latitude!!, 0.0)
-            response.complete(TripIdResponseDto("selected-trip"))
+            assertEquals("selected-trip", requests.single())
+            response.complete(selectionTrip("selected-trip"))
         }
         compose.mainClock.advanceTimeBy(500)
-        compose.onNodeWithTag("departure-screen").assertIsDisplayed()
+        waitForNode(hasTestTag("departure-screen"))
+        assertQuestionsReady()
         compose.onNodeWithTag("trip-selection-screen").assertDoesNotExist()
         compose.onNodeWithText("selected-trip").assertDoesNotExist()
     }
 
     @Test
+    fun activeTripEntersQuestions_withoutResumeRequest() {
+        val resumes = AtomicInteger()
+        setAppContent(selectionRepository {
+            resumes.incrementAndGet()
+            error("active trip must enter questions without resume")
+        })
+        openScreen("시작하기", "trip-selection-screen")
+        compose.onNodeWithTag("resume-selected-trip").performClick()
+        compose.mainClock.advanceTimeBy(500)
+        waitForNode(hasTestTag("departure-screen"))
+        assertQuestionsReady()
+        compose.runOnIdle { assertEquals(0, resumes.get()) }
+    }
+
+    @Test
     fun newTripStartsCreatedServerId_onlyAfterNoDestinationConfirmation() {
         val creates = AtomicInteger()
-        val starts = CopyOnWriteArrayList<String>()
+        val requests = CopyOnWriteArrayList<CreateTripRequestDto>()
         setAppContent(TripSelectionRepository(
             loadTrips = { OngoingTripsResponseDto(emptyList()) },
-            createTrip = { creates.incrementAndGet(); TripIdResponseDto("new-server-trip") },
-            startTrip = { id, _ -> starts += id; TripIdResponseDto(id) },
+            createTrip = { creates.incrementAndGet(); requests += it; selectionTrip("new-server-trip").copy(destinationName = null,
+                destinationLatitude = null, destinationLongitude = null) },
         ))
         openScreen("시작하기", "trip-selection-screen")
         seedSelectionContext()
@@ -125,14 +132,14 @@ class DorologAppTest {
         compose.onNodeWithText("목적지 없이 시작").assertIsDisplayed()
         compose.onNodeWithTag("departure-screen").assertDoesNotExist()
         compose.runOnIdle {
-            assertEquals(1, creates.get())
-            assertEquals(emptyList<String>(), starts.toList())
+            assertEquals(0, creates.get())
+            assertEquals(emptyList<CreateTripRequestDto>(), requests.toList())
         }
         seedSelectionContext()
         compose.onNodeWithText("목적지 없이 시작").performClick()
         compose.mainClock.advanceTimeBy(500)
-        compose.onNodeWithTag("departure-screen").assertIsDisplayed()
-        compose.runOnIdle { assertEquals(listOf("new-server-trip"), starts.toList()) }
+        waitForNode(hasTestTag("departure-screen"))
+        compose.runOnIdle { assertEquals(1, creates.get()); assertNull(requests.single().destinationName) }
     }
 
     @Test
@@ -165,7 +172,7 @@ class DorologAppTest {
         openScreen("시작하기", "departure-screen")
         compose.onNodeWithContentDescription("다음 추천 질문").performClick()
         compose.mainClock.advanceTimeBy(500)
-        compose.onNodeWithText("지난 여행에서 가장 기억에 남는 순간은 언제였나요?", substring = true).assertIsDisplayed()
+        waitForNode(hasText("지난 여행에서 가장 기억에 남는 순간은 언제였나요?", substring = true))
         compose.onNodeWithText("뒤로가기").performClick()
         compose.mainClock.advanceTimeByFrame()
         assertMainReady()
@@ -212,7 +219,7 @@ class DorologAppTest {
         setArchiveApp(archiveRequests, summaryRequests)
         openScreen("이야기 보관함", "archive-screen")
         showOldestBusanTrips()
-        val lastTrip = "archive-region-trip-server-trip-12"
+        val lastTrip = "archive-map-story-server-story-12"
         compose.onNodeWithTag("archive-region-trips").performScrollToNode(hasTestTag(lastTrip))
         repeat(2) { pass ->
             compose.onNodeWithTag(lastTrip).assertIsDisplayed().performClick()
@@ -224,10 +231,10 @@ class DorologAppTest {
             compose.onNodeWithTag("archive-region-trips").assertIsDisplayed()
             compose.onNodeWithText("오래된순").assertIsDisplayed()
             compose.onNodeWithText("부산").assertIsDisplayed()
-            compose.onNodeWithText("전체 여행").assertIsDisplayed()
+            compose.onNodeWithText("전체 이야기").assertIsDisplayed()
             compose.onNodeWithTag(lastTrip).assertIsDisplayed()
-            compose.onNodeWithTag("archive-region-trip-server-trip-14").assertDoesNotExist()
-            compose.runOnIdle { assertEquals(listOf(ArchiveSort.Latest, ArchiveSort.Oldest), archiveRequests.toList()) }
+            compose.onNodeWithTag("archive-map-story-server-story-14").assertDoesNotExist()
+            compose.runOnIdle { assertEquals(listOf(ArchiveSort.Latest), archiveRequests.toList()) }
         }
     }
 
@@ -237,16 +244,16 @@ class DorologAppTest {
         setArchiveApp(archiveRequests, summaryRequests)
         openScreen("이야기 보관함", "archive-screen")
         showOldestBusanTrips()
-        compose.onNodeWithTag("archive-region-trip-server-trip-1").performClick()
+        compose.onNodeWithTag("archive-map-story-server-story-1").performClick()
         compose.onNodeWithTag("settlement-screen").assertIsDisplayed()
         compose.onNodeWithText("확인").performClick()
         assertMainReady()
         openScreen("이야기 보관함", "archive-screen")
         compose.onNodeWithTag("archive-trip-grid").assertIsDisplayed()
         compose.onNodeWithText("최신순").assertIsDisplayed()
-        compose.onNodeWithText("전체 여행").assertDoesNotExist()
+        compose.onNodeWithText("전체 이야기").assertDoesNotExist()
         compose.runOnIdle {
-            assertEquals(listOf(ArchiveSort.Latest, ArchiveSort.Oldest, ArchiveSort.Latest), archiveRequests.toList())
+            assertEquals(listOf(ArchiveSort.Latest, ArchiveSort.Latest), archiveRequests.toList())
             assertEquals(listOf("server-trip-1"), summaryRequests.toList())
         }
     }
@@ -297,34 +304,45 @@ class DorologAppTest {
         compose.onNodeWithTag("archive-region-trips").assertIsDisplayed()
     }
 
-    private fun archiveRepository(requests: MutableList<ArchiveSort>) = ArchiveRepository({ sort ->
-        requests += sort
+    private fun archiveRepository(requests: MutableList<ArchiveSort>): ArchiveRepository {
         val trips = (1..14).map { index ->
             val busan = index <= 12
-            ArchiveTripDto("server-trip-$index", "여행 $index", "서울", listOf(ArchiveDestinationDto(
-                if (busan) "부산 목적지 $index" else "서울 목적지 $index",
-                if (busan) 35.16 else 37.56, if (busan) 129.16 else 126.98,
-                if (busan) "26000" else "11000", if (busan) "부산" else "서울")),
-                "2026-11-${index.toString().padStart(2, '0')}", 1)
+            ArchiveTripDto(id = "server-trip-$index", originName = "서울",
+                destinationName = if (busan) "부산 목적지 $index" else "서울 목적지 $index",
+                destinationLatitude = if (busan) 35.16 else 37.56,
+                destinationLongitude = if (busan) 129.16 else 126.98,
+                status = "finished", startedAt = "2026-11-${index.toString().padStart(2, '0')}T00:00:00Z",
+                endedAt = null, storyCount = 1)
         }
-        ArchiveResponseDto(if (sort == ArchiveSort.Latest) trips.reversed() else trips)
-    }, false)
+        val stories = trips.mapIndexed { index, trip ->
+            ArchiveMapStoryDto("server-story-${index + 1}", trip.id, "여행 ${index + 1}",
+                if (index < 12) "부산" else "서울", trip.destinationLatitude, trip.destinationLongitude,
+                "가족과 나눈 대화", emptyList(), trip.startedAt)
+        }
+        return ArchiveRepository({ requests += ArchiveSort.Latest; ArchiveResponseDto(trips.reversed()) },
+            { ArchiveMapResponseDto(14, 14,
+                listOf(ArchiveRegionDto("부산", 12, 35.16, 129.16), ArchiveRegionDto("서울", 2, 37.56, 126.98)), stories) })
+    }
 
     private fun summaryRepository(requests: MutableList<String>) = TripSummaryRepository { tripId ->
         requests += tripId
         TripSummaryResponseDto(tripId, listOf(TripSummaryStoryDto("saved", "저장된 이야기", "부산",
-            content = "가족과 나눈 대화")), listOf("saved"))
+            summary = "가족과 나눈 대화")), listOf("saved"))
     }
 
     private fun selectionRepository(
-        startTrip: suspend (String, StartTripRequestDto) -> TripIdResponseDto = { id, _ -> TripIdResponseDto(id) },
+        status: String = "active",
+        resumeTrip: suspend (String) -> OngoingTripDto = { selectionTrip(it) },
     ) = TripSelectionRepository(
-        loadTrips = { OngoingTripsResponseDto(listOf(OngoingTripDto("selected-trip",
-            TripPlaceDto("서울", "서울", 37.56, 126.98),
-            TripPlaceDto("부산", "부산", 35.16, 129.16), "2026-11-13T00:00:00Z", 2))) },
-        createTrip = { TripIdResponseDto("new-server-trip") },
-        startTrip = startTrip,
+        loadTrips = { OngoingTripsResponseDto(listOf(selectionTrip("selected-trip").copy(status = status))) },
+        createTrip = { selectionTrip("new-server-trip") },
+        resumeTrip = resumeTrip,
     )
+
+    private fun selectionTrip(id: String) = OngoingTripDto(id = id, originName = "서울",
+        originLatitude = 37.56, originLongitude = 126.98, destinationName = "부산",
+        destinationLatitude = 35.16, destinationLongitude = 129.16, status = "active",
+        startedAt = "2026-11-13T00:00:00Z", storyCount = 2)
 
     private fun setAppContent(
         repository: TripSelectionRepository = selectionRepository(),
@@ -339,23 +357,33 @@ class DorologAppTest {
     }
 
     private fun openScreen(button: String, screen: String) {
-        compose.onNodeWithText(button).assertIsEnabled().performClick()
+        waitForNode(hasText(button) and isEnabled()).performClick()
         compose.mainClock.advanceTimeBy(600)
         if (button == "시작하기" && screen == "departure-screen") startSelectedTrip()
-        compose.onNodeWithTag(screen).assertIsDisplayed()
+        waitForNode(hasTestTag(screen))
         compose.onNodeWithText("시작하기").assertDoesNotExist()
         compose.onNodeWithText(if (screen == "archive-screen") "메인 화면으로" else "뒤로가기").assertIsDisplayed()
     }
 
     private fun startSelectedTrip() {
-        seedSelectionContext()
-        compose.onNodeWithTag("resume-selected-trip").assertIsEnabled().performClick()
-        compose.mainClock.advanceTimeByFrame()
-        compose.onNodeWithText("목적지 없이 시작").assertIsDisplayed()
-        seedSelectionContext()
-        compose.onNodeWithText("목적지 없이 시작").assertIsEnabled().performClick()
+        waitForNode(hasTestTag("resume-selected-trip") and isEnabled()).performClick()
         compose.mainClock.advanceTimeBy(500)
-        compose.onNodeWithTag("departure-screen").assertIsDisplayed()
+        waitForNode(hasTestTag("departure-screen"))
+        assertQuestionsReady()
+    }
+
+    private fun assertQuestionsReady() {
+        waitForNode(hasText("이번 여행에서 가족이랑 꼭 같이", substring = true))
+        compose.onNodeWithContentDescription("다음 추천 질문").assertIsDisplayed().assertIsEnabled()
+    }
+
+    private fun waitForNode(matcher: SemanticsMatcher): SemanticsNodeInteraction {
+        // SDK callbacks use real time while these tests advance Compose frames manually.
+        compose.waitUntil(timeoutMillis = 15_000) {
+            compose.mainClock.advanceTimeByFrame()
+            compose.onAllNodes(matcher).fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
+        }
+        return compose.onNode(matcher).assertIsDisplayed()
     }
 
     private fun seedSelectionContext() {
@@ -366,7 +394,7 @@ class DorologAppTest {
     }
 
     private fun assertMainReady() {
-        compose.onNodeWithText("시작하기").assertIsDisplayed().assertIsEnabled()
+        waitForNode(hasText("시작하기") and isEnabled())
         compose.onNodeWithText("이야기 보관함").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithTag("trip-selection-screen").assertDoesNotExist()
         compose.onNodeWithTag("departure-screen").assertDoesNotExist()

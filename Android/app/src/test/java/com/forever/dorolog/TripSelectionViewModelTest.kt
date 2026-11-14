@@ -1,26 +1,34 @@
 package com.forever.dorolog
 
+import com.google.gson.Gson
+import com.google.gson.JsonParser
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.*
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import retrofit2.HttpException
+import retrofit2.Response
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TripSelectionViewModelTest {
     private val dispatcher = StandardTestDispatcher()
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }
     @After fun tearDown() { Dispatchers.resetMain() }
-    private val requests = mutableListOf<Pair<String, StartTripRequestDto>>()
-    private fun repository(create: suspend (CreateTripRequestDto) -> TripIdResponseDto = { TripIdResponseDto("new-server-trip") }) =
-        TripSelectionRepository(loadTrips = { OngoingTripsResponseDto(emptyList()) }, createTrip = create,
-            startTrip = { id, request -> requests += id to request; TripIdResponseDto(id) })
+    private val requests = mutableListOf<CreateTripRequestDto>()
+    private fun trip(id: String = "new-server-trip", destination: String? = null) = OngoingTripDto(
+        id = id, originName = "서울", originLatitude = 37.56, originLongitude = 126.98,
+        destinationName = destination, status = "active", startedAt = "2026-11-13T00:00:00Z", storyCount = 0)
+    private fun repository(create: suspend (CreateTripRequestDto) -> OngoingTripDto = { trip(destination = it.destinationName) }) =
+        TripSelectionRepository(loadTrips = { OngoingTripsResponseDto(emptyList()) },
+            createTrip = { requests += it; create(it) })
 
-    @Test fun newTripWaitsForNoDestinationConfirmation_thenSendsNullWithRealOrigin() = runTest(dispatcher) {
+    @Test fun newTripWaitsForNoDestinationConfirmation_thenCreatesWithRealOrigin() = runTest(dispatcher) {
         val vm = TripSelectionViewModel(repository())
         vm.onNavigationChanged(null, true)
         vm.onLocationChanged(VehicleLocation("서울시", 37.56, 126.98))
@@ -30,9 +38,9 @@ class TripSelectionViewModelTest {
         assertTrue(requests.isEmpty())
         vm.confirmWithoutDestination(); runCurrent()
         assertEquals("new-server-trip", vm.uiState.value.startedTripId)
-        assertEquals("new-server-trip", requests.single().first)
-        assertNull(requests.single().second.destination)
-        assertEquals(37.56, requests.single().second.origin.latitude!!, 0.0)
+        assertNull(requests.single().destinationName)
+        assertEquals("서울시", requests.single().originName)
+        assertEquals(37.56, requests.single().originLatitude!!, 0.0)
     }
 
     @Test fun explicitStartWithoutDestination_staysNullWhenNavigationChangesWhileDialogIsOpen() = runTest(dispatcher) {
@@ -40,103 +48,169 @@ class TripSelectionViewModelTest {
         vm.onNavigationChanged(null, true)
         vm.onLocationChanged(VehicleLocation("서울시", 37.56, 126.98))
         vm.startNewTrip(); runCurrent()
-        assertTrue(vm.uiState.value.showDestinationDialog)
         vm.onNavigationChanged(Destination("새 목적지", 35.16, 129.16, "부산시"), true)
         vm.confirmWithoutDestination(); runCurrent()
-        assertNull(requests.single().second.destination)
+        assertNull(requests.single().destinationName)
         assertNull(vm.uiState.value.startedDestination)
     }
 
-    @Test fun resumeSendsChosenIdAndCurrentDestination_andDuplicateTapsDoNotCreateTrips() = runTest(dispatcher) {
-        var creates = 0
-        val create = CompletableDeferred<TripIdResponseDto>()
-        val vm = TripSelectionViewModel(repository { creates++; create.await() })
-        runCurrent()
+    @Test fun duplicateTapsCreateOnlyOnce_andUseResponseIdAndDestination() = runTest(dispatcher) {
+        val created = CompletableDeferred<OngoingTripDto>()
+        val vm = TripSelectionViewModel(repository { created.await() })
         vm.onNavigationChanged(Destination("부산", 35.16, 129.16, "부산시"), true)
         vm.onLocationChanged(VehicleLocation("서울시", 37.56, 126.98))
         vm.startNewTrip(); vm.startNewTrip(); runCurrent()
-        assertEquals(1, creates)
-        create.complete(TripIdResponseDto("server-id")); runCurrent()
+        assertEquals(1, requests.size)
+        assertEquals("부산", requests.single().destinationName)
+        val request = JsonParser.parseString(Gson().toJson(requests.single())).asJsonObject
+        assertEquals("부산시", request["destinationAddress"]?.asString)
+        created.complete(Gson().fromJson("""{
+            "id":"server-id","originName":"서울","originLatitude":37.56,"originLongitude":126.98,
+            "destinationName":"저장된 목적지","destinationAddress":"부산광역시 동구",
+            "destinationLatitude":null,"destinationLongitude":null,"status":"active",
+            "startedAt":"2026-11-13T00:00:00Z","endedAt":null,"storyCount":0
+        }""", OngoingTripDto::class.java)); runCurrent()
         assertEquals("server-id", vm.uiState.value.startedTripId)
-        assertEquals("부산", requests.single().second.destination?.name)
+        assertEquals("저장된 목적지", vm.uiState.value.startedDestination?.name)
+        assertEquals("부산광역시 동구", vm.uiState.value.startedDestination?.address)
     }
 
-    @Test fun unavailableNavigationDoesNotBecomeNoDestination_andMissingLocationDoesNotSubmit() = runTest(dispatcher) {
+    @Test fun unavailableNavigationAndMissingLocationDoNotCreate_andCanRetryOnceKnown() = runTest(dispatcher) {
         val vm = TripSelectionViewModel(repository())
         vm.onNavigationChanged(null, false)
         vm.startNewTrip(); runCurrent()
         assertFalse(vm.uiState.value.showDestinationDialog)
         assertNotNull(vm.uiState.value.startError)
+        assertTrue(requests.isEmpty())
         vm.onNavigationChanged(null, true)
-        vm.retryStart(); runCurrent()
-        vm.confirmWithoutDestination(); runCurrent()
+        vm.retryStart(); runCurrent(); vm.confirmWithoutDestination(); runCurrent()
         assertTrue(requests.isEmpty())
         assertNotNull(vm.uiState.value.startError)
-        assertNull(vm.uiState.value.startedTripId)
+        vm.onLocationChanged(VehicleLocation("서울시"))
+        vm.confirmWithoutDestination(); runCurrent()
+        assertEquals("new-server-trip", vm.uiState.value.startedTripId)
+        assertNull(requests.single().originLatitude)
+        assertNull(requests.single().originLongitude)
     }
 
-    @Test fun cancelledDialogDoesNotStartTrip_andDraftIsReused() = runTest(dispatcher) {
-        var creates = 0
-        val vm = TripSelectionViewModel(repository { creates++; TripIdResponseDto("draft") })
+    @Test fun cancelledDialogDoesNotCreateAnyDraft() = runTest(dispatcher) {
+        val vm = TripSelectionViewModel(repository())
         vm.onNavigationChanged(null, true)
         vm.startNewTrip(); runCurrent(); vm.dismissDestinationDialog()
-        assertNull(vm.uiState.value.startedTripId)
         vm.startNewTrip(); runCurrent()
-        assertEquals(1, creates)
+        assertNull(vm.uiState.value.startedTripId)
         assertTrue(requests.isEmpty())
     }
 
-    @Test fun failedStartRetainsSamePayloadForIdempotentRetry() = runTest(dispatcher) {
-        val attempts = mutableListOf<StartTripRequestDto>()
-        val vm = TripSelectionViewModel(TripSelectionRepository(loadTrips = { OngoingTripsResponseDto(emptyList()) },
-            createTrip = { TripIdResponseDto("draft") }, startTrip = { id, request ->
-                attempts += request
-                if (attempts.size == 1) throw IOException("lost response")
-                TripIdResponseDto(id)
-            }))
+    @Test fun ambiguousCreateFailure_doesNotRepeatCreationOnRetryOrNewTrip_andCanRefresh() = runTest(dispatcher) {
+        var loads = 0
+        val vm = TripSelectionViewModel(TripSelectionRepository(
+            loadTrips = { loads++; OngoingTripsResponseDto(listOf(trip("created-before-disconnect"))) },
+            createTrip = { requests += it; throw IOException("lost response") }))
+        vm.onNavigationChanged(Destination("부산", 35.16, 129.16, "부산시"), true)
+        vm.onLocationChanged(VehicleLocation("서울시", 37.56, 126.98))
+        vm.startNewTrip(); runCurrent()
+        vm.retryStart(); vm.startNewTrip(); runCurrent()
+        assertEquals(1, requests.size)
+        assertFalse(vm.uiState.value.canStartNewTrip)
+        assertFalse(vm.uiState.value.canRetryStart)
+        assertNull(vm.uiState.value.startedTripId)
+        assertNotNull(vm.uiState.value.startError)
+        vm.retry(); runCurrent()
+        assertEquals(2, loads)
+        assertEquals("created-before-disconnect", vm.uiState.value.trips.single().id)
+    }
+
+    @Test fun definitiveCreateRejectionAllowsRetry() = runTest(dispatcher) {
+        val vm = TripSelectionViewModel(repository {
+            if (requests.size == 1) throw HttpException(Response.error<OngoingTripDto>(422, "{}".toResponseBody()))
+            trip()
+        })
         vm.onNavigationChanged(Destination("부산", 35.16, 129.16, "부산시"), true)
         vm.onLocationChanged(VehicleLocation("서울시", 37.56, 126.98))
         vm.startNewTrip(); runCurrent()
         assertNull(vm.uiState.value.startedTripId)
+        assertTrue(vm.uiState.value.canStartNewTrip)
+        assertTrue(vm.uiState.value.canRetryStart)
         vm.retryStart(); runCurrent()
-        assertEquals(2, attempts.size)
-        assertEquals(attempts.first(), attempts.last())
-        assertEquals("draft", vm.uiState.value.startedTripId)
+        assertEquals(2, requests.size)
+        assertEquals("new-server-trip", vm.uiState.value.startedTripId)
     }
 
-    @Test fun resumeUsesSelectedServerIdAndFreshNavigation_insteadOfHistoricalDestination() = runTest(dispatcher) {
-        val place = TripPlaceDto("서울", "서울시", 37.56, 126.98)
-        var creates = 0
-        val repository = TripSelectionRepository(loadTrips = { OngoingTripsResponseDto(listOf(
-            OngoingTripDto("selected/old", place, TripPlaceDto("옛 목적지", "옛 주소", 36.0, 127.0), "2026-11-13T00:00:00Z", 2))) },
-            createTrip = { creates++; TripIdResponseDto("wrong") },
-            startTrip = { id, request -> requests += id to request; TripIdResponseDto(id) })
-        val vm = TripSelectionViewModel(repository)
+    @Test fun definitiveCreateRejectionAllowsAnotherNewTripSelection() = runTest(dispatcher) {
+        val vm = TripSelectionViewModel(repository {
+            if (requests.size == 1) throw HttpException(Response.error<OngoingTripDto>(422, "{}".toResponseBody()))
+            trip()
+        })
+        vm.onNavigationChanged(Destination("부산", 35.16, 129.16, "부산시"), true)
+        vm.onLocationChanged(VehicleLocation("서울시", 37.56, 126.98))
+        vm.startNewTrip(); runCurrent()
+        vm.startNewTrip(); runCurrent()
+        assertEquals(2, requests.size)
+        assertEquals("new-server-trip", vm.uiState.value.startedTripId)
+    }
+
+    @Test fun activeTripStartsWithExistingIdAndStoredDestination_withoutResume() = runTest(dispatcher) {
+        val resumes = mutableListOf<String>()
+        val vm = TripSelectionViewModel(TripSelectionRepository(
+            loadTrips = { OngoingTripsResponseDto(listOf(trip("selected/active", "저장된 목적지"))) },
+            createTrip = { error("active selection must not create") },
+            resumeTrip = { resumes += it; trip(it) }))
         runCurrent()
         vm.onNavigationChanged(Destination("새 목적지", 35.16, 129.16, "부산시"), true)
-        vm.onLocationChanged(VehicleLocation("현재 위치", 37.5, 127.0))
-        vm.resumeTrip("unknown"); runCurrent()
-        assertTrue(requests.isEmpty())
-        vm.resumeTrip("selected/old"); runCurrent()
-        assertEquals(0, creates)
-        assertEquals("selected/old", vm.uiState.value.startedTripId)
-        assertEquals("새 목적지", requests.single().second.destination?.name)
-        assertEquals("현재 위치", requests.single().second.origin.address)
+        vm.resumeTrip("selected/active"); runCurrent()
+        assertTrue(resumes.isEmpty())
+        assertEquals("selected/active", vm.uiState.value.startedTripId)
+        assertEquals("저장된 목적지", vm.uiState.value.startedDestination?.name)
+        assertFalse(vm.uiState.value.showDestinationDialog)
     }
 
-    @Test fun returningToTripAfterAnotherFailedSelection_reusesUnacknowledgedStart() = runTest(dispatcher) {
-        val attempts = mutableListOf<Pair<String, StartTripRequestDto>>()
-        val place = TripPlaceDto("서울", "서울시", 37.56, 126.98)
-        val vm = TripSelectionViewModel(TripSelectionRepository(loadTrips = { OngoingTripsResponseDto(
-            listOf("a", "b").map { OngoingTripDto(it, place, null, "2026-11-13T00:00:00Z", 0) }) },
-            startTrip = { id, request -> attempts += id to request; throw IOException("response lost") }))
+    @Test fun finishedTripWaitsForResume_andUsesResponseDestination_withoutCurrentVehicleContext() = runTest(dispatcher) {
+        val resumes = mutableListOf<String>()
+        val resumed = CompletableDeferred<OngoingTripDto>()
+        val vm = TripSelectionViewModel(TripSelectionRepository(
+            loadTrips = { OngoingTripsResponseDto(listOf(trip("selected/old", "이전 목적지").copy(status = "finished"))) },
+            createTrip = { error("resume must not create") },
+            resumeTrip = { resumes += it; resumed.await() }))
         runCurrent()
-        vm.onNavigationChanged(Destination("부산", 35.16, 129.16, "부산시"), true)
+        vm.onNavigationChanged(Destination("새 목적지", 35.16, 129.16, "부산시"), true)
+        vm.resumeTrip("unknown"); runCurrent()
+        assertTrue(resumes.isEmpty())
+        vm.resumeTrip("selected/old"); runCurrent()
+        assertEquals(listOf("selected/old"), resumes)
+        assertNull(vm.uiState.value.startedTripId)
+        assertTrue(vm.uiState.value.starting)
+        resumed.complete(trip("selected/old", "저장된 목적지")); runCurrent()
+        assertEquals("selected/old", vm.uiState.value.startedTripId)
+        assertEquals("저장된 목적지", vm.uiState.value.startedDestination?.name)
+        assertNull(vm.uiState.value.startedDestination?.latitude)
+        assertFalse(vm.uiState.value.showDestinationDialog)
+    }
+
+    @Test fun failedResumeCanRetryTheSameId_withoutCreating() = runTest(dispatcher) {
+        val resumes = mutableListOf<String>()
+        val vm = TripSelectionViewModel(TripSelectionRepository(
+            loadTrips = { OngoingTripsResponseDto(listOf(trip("chosen").copy(status = "finished"))) },
+            resumeTrip = { resumes += it; if (resumes.size == 1) throw IOException("lost response") else trip(it) }))
+        runCurrent()
+        vm.resumeTrip("chosen"); vm.resumeTrip("chosen"); runCurrent()
+        assertNotNull(vm.uiState.value.startError)
+        vm.retryStart(); runCurrent()
+        assertEquals(listOf("chosen", "chosen"), resumes)
+        assertEquals("chosen", vm.uiState.value.startedTripId)
+    }
+
+    @Test fun invalidCoordinatePairDoesNotSendCreate() = runTest(dispatcher) {
+        val vm = TripSelectionViewModel(repository())
+        vm.onNavigationChanged(Destination("부산", 35.16, null), true)
         vm.onLocationChanged(VehicleLocation("서울시", 37.56, 126.98))
-        vm.resumeTrip("a"); runCurrent()
-        vm.resumeTrip("b"); runCurrent()
-        vm.resumeTrip("a"); runCurrent()
-        assertEquals(listOf("a", "b", "a"), attempts.map { it.first })
-        assertEquals(attempts.first().second, attempts.last().second)
+        vm.startNewTrip(); runCurrent()
+        assertTrue(requests.isEmpty())
+        assertNotNull(vm.uiState.value.startError)
+        assertTrue(vm.uiState.value.canStartNewTrip)
+        assertTrue(vm.uiState.value.canRetryStart)
+        vm.onNavigationChanged(Destination("부산", 35.16, 129.16), true)
+        vm.retryStart(); runCurrent()
+        assertEquals("new-server-trip", vm.uiState.value.startedTripId)
     }
 }

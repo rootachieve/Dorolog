@@ -36,7 +36,9 @@ import java.util.concurrent.TimeUnit
  * If response.create arrives while server VAD detects speech, decline it and resend
  * input.speech_started instead of starting an assistant response. Input capture continues
  * until response.started acknowledges acceptance, so in-flight speech is not clipped.
- * Server binary PCM uses the same format and belongs to the current response. The server must
+ * response.text contains the latest complete question, not a delta. Text-only responses are
+ * spoken by Pleos TTS after response.done. Optional server binary PCM uses the same format
+ * and belongs to the current response; when present, it replaces local TTS. The server must
  * stop a cancelled response before starting another, and send done only after its final PCM.
  * Pace PCM near real time (at most one second ahead); the client has a bounded two-second queue.
  * Responses are half-duplex: microphone capture resumes only after speaker output drains.
@@ -280,8 +282,8 @@ internal class DrivingConversationTransport(
         if (it.isJsonPrimitive && it.asJsonPrimitive.isString) it.asString.takeIf(String::isNotBlank) else null
     }
 
-    private companion object {
-        const val MAX_QUEUED_BYTES = 48_000L
+    companion object {
+        private const val MAX_QUEUED_BYTES = 48_000L
         val client = OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS)
             .pingInterval(15, TimeUnit.SECONDS).build()
     }

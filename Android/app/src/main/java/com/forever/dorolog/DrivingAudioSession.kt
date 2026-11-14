@@ -18,6 +18,11 @@ import android.telecom.TelecomManager
 import android.telephony.PhoneStateListener
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
+import ai.pleos.playground.tts.TextToSpeech
+import ai.pleos.playground.tts.constant.ErrorType
+import ai.pleos.playground.tts.constant.Mode
+import ai.pleos.playground.tts.listener.EventListener
+import ai.pleos.playground.tts.listener.OnInitializeListener
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +35,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.WebSocket
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.log10
@@ -38,6 +45,7 @@ import kotlin.math.sqrt
 internal class DrivingAudioSession(
     context: Context,
     private val endpoint: String = BuildConfig.DRIVING_VOICE_URL,
+    private val socketFactory: WebSocket.Factory = DrivingConversationTransport.client,
 ) : DrivingRuntime {
     private val app = context.applicationContext
     private val audio = app.getSystemService(AudioManager::class.java)
@@ -56,12 +64,16 @@ internal class DrivingAudioSession(
     private var destination: Destination? = null
     private var sessionId: String? = null
     private var tripId: String? = null
+    private var initialQuestion: String? = null
     private var location = VehicleLocation()
     private var transport: DrivingConversationTransport? = null
     private var serverReady = false
     private var responseActive = false
     private var followUpPending = false
     private var responseReceived = false
+    private var responseQuestion: String? = null
+    private var speech: TextToSpeech? = null
+    private var cancelSpeech: (() -> Unit)? = null
     private var responseTimeout: Job? = null
     private var connectionTimeout: Job? = null
     private var captureJob: Job? = null
@@ -187,6 +199,9 @@ internal class DrivingAudioSession(
         tripId: String) {
         if (closed) return
         stop()
+        if (this.tripId != tripId || this.topic?.id != topic.id) {
+            initialQuestion = topic.question.takeIf { it.isNotBlank() }
+        }
         this.topic = topic
         this.destination = destination
         this.sessionId = sessionId
@@ -252,6 +267,11 @@ internal class DrivingAudioSession(
         if (!active || !focusHeld || transport != null || captureJob?.isActive == true || responseActive) return
         if (!microphoneAvailable()) { fail("마이크 권한 또는 개인정보 보호 설정을 확인해 주세요"); return }
         val current = generation
+        initialQuestion?.let {
+            beginResponse(current)
+            speakQuestion(it, current, initial = true)
+            return
+        }
         if (endpoint.isBlank()) {
             listener?.onServerUnavailable("대화 서버가 설정되지 않았어요. 마이크 입력만 확인할 수 있어요")
             startCapture(current)
@@ -282,7 +302,10 @@ internal class DrivingAudioSession(
                     listener?.onSessionReady(sessionId)
                     startCapture(current)
                 }
-                override fun onQuestion(text: String) = dispatch { listener?.onQuestion(text) }
+                override fun onQuestion(text: String) = dispatch {
+                    responseQuestion = text
+                    listener?.onQuestion(text)
+                }
                 override fun onSpeechChanged(speaking: Boolean) = dispatch {
                     if (speaking && !responseActive) {
                         if (followUpPending) transport?.cancelResponse()
@@ -295,10 +318,15 @@ internal class DrivingAudioSession(
                 override fun onAudio(pcm: ByteArray) = dispatch { enqueueAudio(pcm, current) }
                 override fun onResponseDone() = dispatch {
                     responseTimeout?.cancel()
-                    if (playbackQueue == null) finishResponse(current) else playbackQueue?.close()
+                    val question = responseQuestion
+                    when {
+                        playbackQueue != null -> playbackQueue?.close()
+                        question != null -> speakQuestion(question, current)
+                        else -> finishResponse(current)
+                    }
                 }
                 override fun onFailure(message: String) = dispatch { serverFailure(message) }
-            })
+            }, socketFactory)
             transport = socket
             socket.connect(requireNotNull(topic), destination, sessionId, requireNotNull(tripId),
                 location.address, location.latitude, location.longitude)
@@ -408,6 +436,7 @@ internal class DrivingAudioSession(
         if (received && responseReceived) { serverFailure("이전 음성 재생이 끝나기 전에 다음 응답이 도착했어요"); return }
         if (received) responseReceived = true
         followUpPending = false
+        responseQuestion = null
         responseActive = true
         stopCapture()
         listener?.onResponseStarted()
@@ -420,6 +449,94 @@ internal class DrivingAudioSession(
             delay(30_000)
             if (active && current == generation && (responseActive || followUpPending)) serverFailure("서버 응답이 지연됐어요. 재개하면 다시 연결해요")
         }
+    }
+
+    private fun speakQuestion(text: String, current: Int, initial: Boolean = false) {
+        val tts = runCatching { TextToSpeech(app, Mode.ON_DEVICE) }.getOrElse {
+            fail("음성 안내를 초기화할 수 없어요. 다시 재개해 주세요")
+            return
+        }
+        speech = tts
+        var requested = false
+        var released = false
+        var cleanupTimeout: Runnable? = null
+        lateinit var events: EventListener
+        fun release() {
+            if (released) return
+            released = true
+            cleanupTimeout?.let(main::removeCallbacks)
+            if (speech === tts) {
+                speech = null
+                cancelSpeech = null
+            }
+            runCatching { tts.removeEventListener(events) }
+            runCatching { tts.release() }
+        }
+        // Pleos callbacks arrive on Binder threads and have no request ID.
+        fun dispatch(block: () -> Unit) {
+            main.post {
+                if (active && focusHeld && current == generation && speech === tts) block()
+            }
+        }
+        fun terminal(block: () -> Unit) {
+            main.post {
+                val currentSpeech = active && focusHeld && current == generation && speech === tts
+                release()
+                if (currentSpeech) block()
+            }
+        }
+        fun awaitSpeech(timeoutMillis: Long) {
+            responseTimeout?.cancel()
+            responseTimeout = scope.launch {
+                delay(timeoutMillis)
+                if (active && current == generation && speech === tts) {
+                    fail("음성 안내 응답이 지연됐어요. 다시 재개해 주세요")
+                }
+            }
+        }
+        events = object : EventListener {
+            override fun onReady() = Unit
+            override fun onStart() = dispatch {
+                awaitSpeech(maxOf(30_000L, text.length * 1_000L))
+                listener?.onPlaybackChanged(true)
+            }
+            override fun onUpdatedRms(rms: Double) = Unit
+            override fun onDone() = terminal {
+                if (initial) initialQuestion = null
+                finishResponse(current)
+            }
+            override fun onStop() = terminal { fail("음성 안내가 중단됐어요. 다시 재개해 주세요") }
+            override fun onError(errorType: ErrorType) = terminal {
+                fail("질문을 읽을 수 없어요. 다시 재개해 주세요")
+            }
+        }
+        cancelSpeech = {
+            speech = null
+            cancelSpeech = null
+            if (!requested) release() else {
+                // Pleos stop is async; releasing before its callback can bind the engine again.
+                // shortcut: release after 5s without a callback; revisit when Pleos offers an awaitable stop.
+                cleanupTimeout = Runnable { release() }.also { main.postDelayed(it, 5_000) }
+                runCatching { tts.stop() }.onFailure { release() }
+            }
+        }
+        awaitSpeech(30_000)
+        runCatching {
+            tts.initialize(object : OnInitializeListener {
+                override fun onSuccess() = dispatch {
+                    runCatching {
+                        tts.addEventListener(events)
+                        tts.setAudioAttributes(attributes)
+                        tts.setLocale(Locale.KOREA)
+                        requested = true
+                        tts.speak(text)
+                    }.onFailure { fail("질문을 읽을 수 없어요. 다시 재개해 주세요") }
+                }
+                override fun onFailure(errorType: ErrorType) = dispatch {
+                    fail("음성 안내를 초기화할 수 없어요. 다시 재개해 주세요")
+                }
+            })
+        }.onFailure { fail("음성 안내를 초기화할 수 없어요. 다시 재개해 주세요") }
     }
 
     private fun enqueueAudio(pcm: ByteArray, current: Int) {
@@ -504,12 +621,13 @@ internal class DrivingAudioSession(
         responseActive = false
         followUpPending = false
         responseReceived = false
+        responseQuestion = null
         responseTimeout?.cancel()
         playbackQueue = null
         player = null
         listener?.onPlaybackChanged(false)
         listener?.onResponseFinished()
-        startCapture(current)
+        if (transport == null) startListening() else startCapture(current)
     }
 
     private fun serverFailure(message: String) {
@@ -547,10 +665,12 @@ internal class DrivingAudioSession(
         responseActive = false
         followUpPending = false
         responseReceived = false
+        responseQuestion = null
         responseTimeout?.cancel()
         connectionTimeout?.cancel()
         stopCapture()
         stopPlayback()
+        cancelSpeech?.invoke()
     }
 
     override fun stop() {

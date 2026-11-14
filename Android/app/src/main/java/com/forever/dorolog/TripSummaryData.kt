@@ -24,31 +24,34 @@ data class TripSummaryStoryDto(
     @SerializedName("id") val id: String? = null,
     @SerializedName("title") val title: String? = null,
     @SerializedName("region") val region: String? = null,
-    @SerializedName("occurredAt") val occurredAt: String? = null,
-    @SerializedName("createdAt") val createdAt: String? = null,
-    @SerializedName("content") val content: String? = null,
-    @SerializedName("conversationExcerpts") val conversationExcerpts: List<String?>? = null,
+    @SerializedName("recordedAt") val recordedAt: String? = null,
+    @SerializedName("summary") val summary: String? = null,
+    @SerializedName("highlights") val highlights: List<String?>? = null,
+    @SerializedName("latitude") val latitude: Double? = null,
+    @SerializedName("longitude") val longitude: Double? = null,
 )
 
 data class TripSummaryResponseDto(
-    @SerializedName("tripId") val tripId: String? = null,
+    @SerializedName("id") val id: String? = null,
     @SerializedName("stories") val stories: List<TripSummaryStoryDto?>? = null,
     @SerializedName("savedStoryIds") val savedStoryIds: List<String?>? = null,
 ) {
     fun toModel(expectedTripId: String): List<SavedTripStory> {
-        require(tripId == summaryId(expectedTripId))
+        require(id == summaryId(expectedTripId))
         val models = requireNotNull(stories).map { nullableStory ->
             val story = requireNotNull(nullableStory)
             val id = summaryId(story.id)
+            require((story.latitude == null) == (story.longitude == null))
+            story.latitude?.let { require(it.isFinite() && it in -90.0..90.0) }
+            story.longitude?.let { require(it.isFinite() && it in -180.0..180.0) }
             SavedTripStory(
                 key = id, id = id,
                 title = requireNotNull(story.title).also { require(it.isNotBlank()) },
                 region = requireNotNull(story.region).also { require(it.isNotBlank()) },
-                occurredAt = (story.occurredAt ?: story.createdAt)?.let(::summaryTime),
-                content = story.content?.takeIf { it.isNotBlank() },
-                conversationExcerpts = story.conversationExcerpts.orEmpty().map {
-                    requireNotNull(it).also { excerpt -> require(excerpt.isNotBlank()) }
-                },
+                occurredAt = story.recordedAt?.let(::summaryTime),
+                content = story.summary?.takeIf { it.isNotBlank() },
+                conversationExcerpts = story.highlights.orEmpty().map { requireNotNull(it) }
+                    .filter { it.isNotBlank() },
             )
         }
         val storyIds = models.map { it.id }.toSet()

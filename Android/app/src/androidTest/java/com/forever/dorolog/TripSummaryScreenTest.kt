@@ -1,10 +1,12 @@
 package com.forever.dorolog
 
+import android.view.View
 import androidx.activity.OnBackPressedDispatcher
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.espresso.Espresso.pressBack
@@ -81,14 +83,20 @@ class TripSummaryScreenTest {
     @Test fun systemBackUsesArchiveCallback_whenProvided() {
         var wentBack = false
         var confirmed = false
+        lateinit var view: View
         compose.setContent {
+            view = LocalView.current
             TripSummaryScreen("trip", { confirmed = true }, animationsEnabled = false,
                 onBack = { wentBack = true }, repository = TripSummaryRepository {
                     TripSummaryResponseDto("trip", emptyList(), emptyList())
                 })
         }
+        compose.onNodeWithText("‹ 뒤로").assertIsDisplayed()
+        compose.onNodeWithTag("settlement-screen").performTouchInput { click(center) }
+        compose.waitUntil(5_000) { compose.runOnUiThread { view.isShown && view.hasWindowFocus() } }
         pressBack()
-        compose.runOnIdle { assertTrue(wentBack); assertFalse(confirmed) }
+        compose.waitUntil(5_000) { compose.runOnUiThread { wentBack } }
+        compose.runOnIdle { assertFalse(confirmed) }
     }
 
     @Test fun reenteringSummaryReloads_andNewTripNeverReusesSelectedStory() {

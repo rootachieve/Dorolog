@@ -22,9 +22,16 @@ class ArchiveViewModel(
         val error: String? = null,
     ) {
         val visibleTrips: List<ArchiveTrip>
-            get() = if (tab == ArchiveTab.Map && selectedRegionId != null) {
-                content.trips.filter { it.regionId == selectedRegionId }
-            } else content.trips
+            get() = if (sort == ArchiveSort.Latest) content.trips.sortedByDescending { it.startedAt }
+                else content.trips.sortedBy { it.startedAt }
+
+        val visibleStories: List<ArchiveStory>
+            get() {
+                val stories = content.stories.filter { selectedRegionId == null || it.region == selectedRegionId }
+                val byTime = compareBy<ArchiveStory> { it.recordedAt }
+                return stories.sortedWith(compareBy<ArchiveStory> { it.recordedAt == null }
+                    .then(if (sort == ArchiveSort.Latest) byTime.reversed() else byTime))
+            }
     }
 
     private val _uiState = MutableStateFlow(UiState())
@@ -40,7 +47,6 @@ class ArchiveViewModel(
     fun selectSort(sort: ArchiveSort) {
         if (sort == uiState.value.sort) return
         _uiState.update { it.copy(sort = sort) }
-        retry()
     }
 
     fun selectRegion(id: String?) {
@@ -50,11 +56,10 @@ class ArchiveViewModel(
 
     fun retry() {
         loadJob?.cancel()
-        val sort = uiState.value.sort
         loadJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
-                val content = repository.load(sort)
+                val content = repository.load()
                 ensureActive()
                 val selectedRegion = uiState.value.selectedRegionId?.takeIf { id -> content.regions.any { it.id == id } }
                 _uiState.update { it.copy(content = content, selectedRegionId = selectedRegion, isLoading = false, error = null) }

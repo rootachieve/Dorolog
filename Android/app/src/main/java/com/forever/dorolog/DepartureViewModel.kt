@@ -15,7 +15,6 @@ import kotlin.math.abs
 class DepartureViewModel(
     tripId: String,
     private val repository: DepartureRepository = DepartureRepository(),
-    private val previousConversationIds: List<String> = emptyList(),
     private val tripRepository: TripRepository = TripRepository(),
     initialDestination: Destination? = null,
 ) : ViewModel() {
@@ -54,6 +53,7 @@ class DepartureViewModel(
     private var moving = false
     private var parked: Boolean? = null
     private var destinationSetPending = false
+    private var navigationDestination: Destination? = null
     private var storiesLoaded = false
     private var storiesRefreshPending = false
     private var countdownJob: Job? = null
@@ -66,14 +66,20 @@ class DepartureViewModel(
     init { retry() }
 
     fun retry() {
-        if (uiState.value.phase != Phase.Ready || uiState.value.finishingTrip) return
+        val state = uiState.value
+        if (state.phase != Phase.Ready || state.finishingTrip) return
         loadJob?.cancel()
         cancelCountdown()
-        val request = RecommendationRequestDto(uiState.value.destination?.name, previousConversationIds, uiState.value.tripId)
+        if (state.navigationAvailable != true || destinationSetPending) {
+            _uiState.update { it.copy(loading = state.navigationAvailable == null,
+                contentError = state.navigationAvailable == false) }
+            return
+        }
+        val destination = navigationDestination
         loadJob = viewModelScope.launch {
             _uiState.update { it.copy(loading = true, contentError = false) }
             try {
-                val topics = repository.load(request)
+                val topics = repository.load(state.tripId, destination)
                 ensureActive()
                 val selected = uiState.value.selectedTopicId?.takeIf { id -> topics.any { it.id == id } }
                     ?: topics.firstOrNull()?.id
@@ -139,18 +145,22 @@ class DepartureViewModel(
 
     fun onNavigationChanged(destination: Destination?, available: Boolean) {
         if (!active || uiState.value.phase == Phase.Summary || uiState.value.finishingTrip) return
-        if (!available) { _uiState.update { it.copy(navigationAvailable = false) }; return }
+        if (!available) {
+            _uiState.update { it.copy(navigationAvailable = false) }
+            if (uiState.value.phase == Phase.Ready) retry()
+            return
+        }
         val state = uiState.value
         _uiState.update { it.copy(navigationAvailable = true) }
         if (destinationSetPending) return
+        navigationDestination = destination
         if (state.arrived) {
             // Ending navigation after arrival must not dismiss story selection.
             if (destination != null && state.destination?.name != destination.name) beginRecording(destination)
             return
         }
-        val changed = state.destination?.name != destination?.name
         _uiState.update { it.copy(destination = destination) }
-        if (changed && state.phase == Phase.Ready) retry()
+        if (state.phase == Phase.Ready && (state.navigationAvailable != true || state.destination != destination)) retry()
     }
 
     private fun beginRecording(destination: Destination?) {
@@ -318,7 +328,7 @@ class DepartureViewModel(
 
     private fun startCountdownIfReady() {
         val state = uiState.value
-        if (!active || !moving || state.phase != Phase.Ready || state.loading || state.contentError || state.arrived ||
+        if (!active || !moving || state.navigationAvailable != true || state.phase != Phase.Ready || state.loading || state.contentError || state.arrived ||
             state.skipUntilArrival || state.finishingTrip || state.selectedTopicId == null || countdownJob?.isActive == true) return
         _uiState.update { it.copy(countdownSeconds = 5) }
         countdownJob = viewModelScope.launch {

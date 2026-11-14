@@ -56,7 +56,7 @@ private val ArchiveDate = DateTimeFormatter.ofPattern("yyyy년 M월 d일", Local
 @Composable
 internal fun ArchiveRoute(
     onBack: () -> Unit,
-    onTripClick: (ArchiveTrip) -> Unit,
+    onTripClick: (String, String?) -> Unit,
     modifier: Modifier = Modifier,
     browsingAllowed: Boolean = true,
     viewModel: ArchiveViewModel = viewModel(factory = viewModelFactory {
@@ -72,7 +72,7 @@ internal fun ArchiveRoute(
 internal fun ArchiveScreen(
     uiState: ArchiveViewModel.UiState,
     onBack: () -> Unit,
-    onTripClick: (ArchiveTrip) -> Unit,
+    onTripClick: (String, String?) -> Unit,
     onTabSelected: (ArchiveTab) -> Unit,
     onSortSelected: (ArchiveSort) -> Unit,
     onRegionSelected: (String?) -> Unit,
@@ -152,7 +152,7 @@ internal fun ArchiveScreen(
                     Text(uiState.error, fontFamily = ArchiveFont, fontSize = 20.sp, color = Color(0xFF646464), textAlign = TextAlign.Center)
                     TextButton(onClick = onRetry) { Text(stringResource(R.string.retry), color = Color(0xFF5A46FA), fontSize = 20.sp) }
                 }
-                uiState.content.trips.isEmpty() -> ArchiveMessage(stringResource(R.string.archive_empty), Modifier.weight(1f))
+                (if (uiState.tab == ArchiveTab.Trips) uiState.content.trips.isEmpty() else uiState.content.stories.isEmpty()) -> ArchiveMessage(stringResource(R.string.archive_empty), Modifier.weight(1f))
                 uiState.tab == ArchiveTab.Trips -> {
                     val fontScale = LocalDensity.current.fontScale
                     val columns = if (wide && fontScale <= 1.3f) 3 else if (twoColumnsFit) 2 else 1
@@ -160,18 +160,18 @@ internal fun ArchiveScreen(
                         modifier = Modifier.fillMaxWidth().weight(1f).testTag("archive-trip-grid"),
                         horizontalArrangement = Arrangement.spacedBy((24 * scale).dp),
                         verticalArrangement = Arrangement.spacedBy((36 * scale).dp), contentPadding = PaddingValues(bottom = 24.dp)) {
-                        items(uiState.content.trips, key = { it.id }) { trip -> ArchiveTripCard(trip, onTripClick, scale) }
+                        items(uiState.visibleTrips, key = { it.id }) { trip -> ArchiveTripCard(trip, onTripClick, scale) }
                     }
                 }
                 else -> if (wide) {
                     Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy((48 * scale).dp)) {
                         ArchiveMapPanel(uiState, onRegionSelected, Modifier.weight(0.47f).fillMaxHeight())
-                        ArchiveRegionTrips(uiState, onTripClick, scale, regionListState, Modifier.weight(0.53f).fillMaxHeight())
+                        ArchiveRegionStories(uiState, onTripClick, scale, regionListState, Modifier.weight(0.53f).fillMaxHeight())
                     }
                 } else {
                     Column(Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         ArchiveMapPanel(uiState, onRegionSelected, Modifier.fillMaxWidth().weight(0.52f))
-                        ArchiveRegionTrips(uiState, onTripClick, scale, regionListState, Modifier.fillMaxWidth().weight(0.48f))
+                        ArchiveRegionStories(uiState, onTripClick, scale, regionListState, Modifier.fillMaxWidth().weight(0.48f))
                     }
                 }
             }
@@ -204,14 +204,14 @@ private fun ArchiveSortMenu(sort: ArchiveSort, onSelected: (ArchiveSort) -> Unit
 }
 
 @Composable
-private fun ArchiveTripCard(trip: ArchiveTrip, onClick: (ArchiveTrip) -> Unit, scale: Float) {
+private fun ArchiveTripCard(trip: ArchiveTrip, onClick: (String, String?) -> Unit, scale: Float) {
     Box(Modifier.fillMaxWidth().heightIn(min = (294 * scale).dp.coerceAtLeast(180.dp))
         .aspectRatio(508f / 294f).clip(RoundedCornerShape((24 * scale).dp)).background(Color(0xFFE9EBF3))
-        .clickable(role = Role.Button) { onClick(trip) }.testTag("archive-trip-${trip.id}")) {
+        .clickable(role = Role.Button) { onClick(trip.id, trip.destinationName) }.testTag("archive-trip-${trip.id}")) {
         ArchiveDestinationMap(trip.destinationLatitude, trip.destinationLongitude, Modifier.fillMaxSize())
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.25f to Color.Transparent, 1f to Color(0xE0131417))))
         Column(Modifier.align(Alignment.BottomStart).padding((27 * scale).dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("${trip.departureName}\n→ ${trip.destinationName}", fontSize = (36 * scale).coerceAtLeast(20f).sp,
+            Text(trip.destinationName?.let { "${trip.departureName}\n→ $it" } ?: trip.departureName, fontSize = (36 * scale).coerceAtLeast(20f).sp,
                 lineHeight = (44 * scale).coerceAtLeast(26f).sp, color = Color.White, fontFamily = ArchiveFont,
                 fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
             Text(trip.date.format(ArchiveDate), fontSize = (20 * scale).coerceAtLeast(14f).sp,
@@ -236,7 +236,7 @@ private fun ArchiveMapPanel(state: ArchiveViewModel.UiState, onRegionSelected: (
                 DropdownMenu(expanded = regionMenuOpen, onDismissRequest = { regionMenuOpen = false }) {
                     state.content.regions.forEach { region ->
                         DropdownMenuItem(
-                            text = { Text("${region.name} ${region.tripCount}", fontFamily = ArchiveFont, fontSize = 18.sp) },
+                            text = { Text("${region.name} ${region.storyCount}", fontFamily = ArchiveFont, fontSize = 18.sp) },
                             onClick = { regionMenuOpen = false; onRegionSelected(region.id) },
                             modifier = Modifier.semantics { selected = region.id == state.selectedRegionId },
                         )
@@ -250,21 +250,23 @@ private fun ArchiveMapPanel(state: ArchiveViewModel.UiState, onRegionSelected: (
 }
 
 @Composable
-private fun ArchiveRegionTrips(state: ArchiveViewModel.UiState, onClick: (ArchiveTrip) -> Unit, scale: Float, listState: LazyListState, modifier: Modifier) {
+private fun ArchiveRegionStories(state: ArchiveViewModel.UiState, onClick: (String, String?) -> Unit, scale: Float, listState: LazyListState, modifier: Modifier) {
     LazyColumn(modifier.testTag("archive-region-trips"), state = listState,
         verticalArrangement = Arrangement.spacedBy((20 * scale).dp), contentPadding = PaddingValues(bottom = 24.dp)) {
-        itemsIndexed(state.visibleTrips, key = { _, trip -> trip.id }) { index, trip ->
+        itemsIndexed(state.visibleStories, key = { _, story -> story.tripId to story.id }) { index, story ->
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape((36 * scale).dp)).background(Color.White)
-                .clickable(role = Role.Button) { onClick(trip) }.testTag("archive-region-trip-${trip.id}")
+                .clickable(role = Role.Button) {
+                    onClick(story.tripId, state.content.trips.firstOrNull { it.id == story.tripId }?.destinationName)
+                }.testTag("archive-map-story-${story.id}")
                 .heightIn(min = (167 * scale).dp).padding((32 * scale).dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy((23 * scale).dp)) {
                 Box(Modifier.size((64 * scale).dp.coerceAtLeast(40.dp)).background(Color.Black, CircleShape), contentAlignment = Alignment.Center) {
                     Text("${index + 1}", fontFamily = ArchiveFont, fontSize = (32 * scale).coerceAtLeast(18f).sp, color = Color.White)
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(trip.title, fontSize = (32 * scale).coerceAtLeast(20f).sp, fontFamily = ArchiveFont,
+                    Text(story.title, fontSize = (32 * scale).coerceAtLeast(20f).sp, fontFamily = ArchiveFont,
                         color = Color.Black, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text("${trip.regionName} · ${trip.date.format(ArchiveDate)}", fontSize = (24 * scale).coerceAtLeast(14f).sp,
+                    Text("${story.region} · ${story.date?.format(ArchiveDate) ?: "날짜 정보 없음"}", fontSize = (24 * scale).coerceAtLeast(14f).sp,
                         fontFamily = ArchiveFont, color = Color(0xFF646464), maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }
@@ -282,11 +284,11 @@ private fun ArchiveMessage(message: String, modifier: Modifier = Modifier) {
 @Preview(widthDp = 1100, heightDp = 760)
 @Composable
 private fun ArchiveTripsPreview() {
-    ArchiveScreen(ArchiveViewModel.UiState(content = sampleArchiveResponse.toModel(isSample = true), isLoading = false), {}, {}, {}, {}, {}, {})
+    ArchiveScreen(ArchiveViewModel.UiState(content = sampleArchiveContent, isLoading = false), {}, { _, _ -> }, {}, {}, {}, {})
 }
 
 @Preview(widthDp = 1100, heightDp = 760)
 @Composable
 private fun ArchiveMapPreview() {
-    ArchiveScreen(ArchiveViewModel.UiState(tab = ArchiveTab.Map, content = sampleArchiveResponse.toModel(isSample = true), isLoading = false), {}, {}, {}, {}, {}, {})
+    ArchiveScreen(ArchiveViewModel.UiState(tab = ArchiveTab.Map, content = sampleArchiveContent, isLoading = false), {}, { _, _ -> }, {}, {}, {}, {})
 }

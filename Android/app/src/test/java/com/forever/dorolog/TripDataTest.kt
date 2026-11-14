@@ -65,14 +65,14 @@ class TripDataTest {
 
     @Test fun retrofitContractScopesStoriesToTrip_savesIds_andFinishesWithBodylessPost() = runTest {
         val requests = mutableListOf<Pair<Request, String>>()
-        var finishStatus = 204
+        var finishStatus = 200
         val client = OkHttpClient.Builder().addInterceptor { chain ->
             val request = chain.request()
             val body = Buffer().also { request.body?.writeTo(it) }.readUtf8()
             requests += request to body
             Response.Builder().request(request).protocol(Protocol.HTTP_1_1).message("OK")
                 .code(if (request.method == "GET") 200 else if (request.method == "POST") finishStatus else 204)
-                .body((if (request.method == "GET") """{"stories":[],"savedStoryIds":[]}""" else "")
+                .body((if (request.method == "GET" || request.method == "POST") """{"stories":[],"savedStoryIds":[]}""" else "")
                     .toResponseBody("application/json".toMediaType())).build()
         }.build()
         val api = Retrofit.Builder().baseUrl("https://api.example/v1/").client(client)
@@ -80,7 +80,8 @@ class TripDataTest {
         assertEquals(TripStories(emptyList(), emptySet()), api.stories("trip").toModel())
         api.saveStories("trip", SaveParkedStoriesRequestDto(listOf("one", "three")))
         api.saveStories("trip", SaveParkedStoriesRequestDto(emptyList()))
-        api.finishTrip("trip")
+        val finished = Gson().toJsonTree(api.finishTrip("trip"))
+        assertEquals("""{"stories":[],"savedStoryIds":[]}""", finished.toString())
         assertEquals("/v1/trips/trip/stories", requests[0].first.url.encodedPath)
         assertEquals("PUT", requests[1].first.method)
         assertEquals("/v1/trips/trip/saved-stories", requests[1].first.url.encodedPath)

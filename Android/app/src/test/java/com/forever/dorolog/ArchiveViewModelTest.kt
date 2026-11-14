@@ -1,6 +1,5 @@
 package com.forever.dorolog
 
-import com.google.gson.Gson
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -19,179 +18,102 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class ArchiveViewModelTest {
     private val dispatcher = StandardTestDispatcher()
-
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }
     @After fun tearDown() { Dispatchers.resetMain() }
 
-    @Test fun finalDestination_isLastStop_andRegionsCountTripsRatherThanStories() {
-        val busan = ArchiveDestinationDto("부산 해운대", 35.16, 129.16, "26000", "부산")
-        val first = trip("trip-1").copy(destinations = listOf(
-            ArchiveDestinationDto("전주", 35.81, 127.15, "45110", "전주시"), busan,
-        ), storyCount = 5)
-        val second = trip("trip-2").copy(destinations = listOf(busan.copy(latitude = 35.14)), storyCount = 0)
-        val content = ArchiveResponseDto(listOf(first, second)).toModel()
-
-        assertEquals("부산 해운대", content.trips.first().destinationName)
-        assertEquals(129.16, content.trips.first().destinationLongitude, 0.0)
-        assertEquals(2, content.tripCount)
-        assertEquals(5, content.storyCount)
-        assertEquals(1, content.regions.size)
-        assertEquals(2, content.regions.single().tripCount)
-        assertEquals(35.15, content.regions.single().latitude, 0.00001)
-        assertEquals(content.regions, ArchiveResponseDto(listOf(second, first)).toModel().regions)
-    }
-
-    @Test fun emptyResponse_hasZeroTotals_andNoRegions() {
-        val content = ArchiveResponseDto(emptyList()).toModel()
-        assertTrue(content.trips.isEmpty())
-        assertTrue(content.regions.isEmpty())
-        assertEquals(0, content.tripCount)
-        assertEquals(0, content.storyCount)
-    }
-
-    @Test fun invalidData_isRejectedBeforeItReachesTheMapOrTripRoute() {
-        val valid = trip("trip-1")
-        val destination = requireNotNull(valid.destinations?.single())
-        val invalidTrips = listOf(
-            valid.copy(id = " "),
-            valid.copy(departureName = " "),
-            valid.copy(destinations = emptyList()),
-            valid.copy(destinations = listOf(destination, null)),
-            valid.copy(destinations = listOf(destination.copy(latitude = 90.1))),
-            valid.copy(destinations = listOf(destination.copy(longitude = -180.1))),
-            valid.copy(destinations = listOf(destination.copy(latitude = Double.NaN))),
-            valid.copy(destinations = listOf(destination.copy(longitude = Double.POSITIVE_INFINITY))),
-            valid.copy(destinations = listOf(destination.copy(regionId = ""))),
-            valid.copy(destinations = listOf(destination.copy(regionName = ""))),
-            valid.copy(destinations = listOf(destination.copy(name = ""))),
-            valid.copy(date = "2026-02-30"),
-            valid.copy(storyCount = -1),
-            valid.copy(storyCount = null),
-        )
-        invalidTrips.forEach { item ->
-            assertThrows("Invalid DTO must fail: $item", Exception::class.java) {
-                ArchiveResponseDto(listOf(item)).toModel()
-            }
-        }
-        assertThrows(Exception::class.java) { ArchiveResponseDto(listOf(null)).toModel() }
-        assertThrows(Exception::class.java) { ArchiveResponseDto(listOf(valid, valid)).toModel() }
-        assertThrows(Exception::class.java) {
-            Gson().fromJson("{}", ArchiveResponseDto::class.java).toModel()
-        }
-    }
-
-    @Test fun contradictoryRegionNames_andOverflowingStoryTotals_areRejected() {
-        val valid = trip("trip-1")
-        val destination = requireNotNull(valid.destinations?.single())
-        assertThrows(Exception::class.java) {
-            ArchiveResponseDto(listOf(valid, trip("trip-2").copy(
-                destinations = listOf(destination.copy(regionName = "다른 지역")),
-            ))).toModel()
-        }
-        assertThrows(Exception::class.java) {
-            ArchiveResponseDto(listOf(valid.copy(storyCount = Int.MAX_VALUE), trip("trip-2"))).toModel()
-        }
-    }
-
-    @Test fun sortIsSentToTheRepository_fromEitherTab_andDoesNotReloadForSameSort() = runTest(dispatcher) {
-        val requests = mutableListOf<ArchiveSort>()
-        val vm = ArchiveViewModel(ArchiveRepository({ requests.add(it); sampleArchiveResponse }, false))
+    @Test fun sortingBothTabs_isLocal_withoutReloading() = runTest(dispatcher) {
+        var tripRequests = 0
+        var mapRequests = 0
+        val vm = ArchiveViewModel(ArchiveRepository(
+            { tripRequests++; sampleArchiveResponse }, { mapRequests++; sampleArchiveMapResponse }))
         runCurrent()
-        vm.selectSort(ArchiveSort.Latest)
+        assertEquals("sample-busan-2", vm.uiState.value.visibleTrips.first().id)
         vm.selectSort(ArchiveSort.Oldest); runCurrent()
+        assertEquals("sample-jeju", vm.uiState.value.visibleTrips.first().id)
         vm.selectTab(ArchiveTab.Map)
+        assertEquals("sample-jeju", vm.uiState.value.visibleStories.first().tripId)
         vm.selectSort(ArchiveSort.Latest); runCurrent()
-        assertEquals(listOf(ArchiveSort.Latest, ArchiveSort.Oldest, ArchiveSort.Latest), requests)
-        assertEquals("latest", ArchiveSort.Latest.queryValue)
-        assertEquals("oldest", ArchiveSort.Oldest.queryValue)
+        assertEquals("sample-busan-2", vm.uiState.value.visibleStories.first().tripId)
+        assertEquals(1, tripRequests)
+        assertEquals(1, mapRequests)
     }
 
-    @Test fun regionSelection_filtersOnlyMapTab_andCanReturnToAllTrips() = runTest(dispatcher) {
-        val vm = ArchiveViewModel(sampleRepository())
+    @Test fun storySorting_usesFullTimestamp_andLeavesUnknownTimeLastInBothDirections() = runTest(dispatcher) {
+        val stories = listOf(
+            story("older", "trip", "서울", null, null).copy(recordedAt = "2026-11-14T09:00:00+09:00"),
+            story("unknown", "trip", "서울", null, null).copy(recordedAt = null),
+            story("newer", "trip", "서울", null, null).copy(recordedAt = "2026-11-14T10:00:00+09:00"),
+        )
+        val vm = ArchiveViewModel(ArchiveRepository({ ArchiveResponseDto(emptyList()) }, {
+            ArchiveMapResponseDto(3, 1, listOf(ArchiveRegionDto("서울", 3, null, null)), stories)
+        }))
         runCurrent()
-        vm.selectTab(ArchiveTab.Map)
-        val region = vm.uiState.value.content.regions.first { it.tripCount == 2 }
-        vm.selectRegion(region.id)
-        assertEquals(2, vm.uiState.value.visibleTrips.size)
-        assertTrue(vm.uiState.value.visibleTrips.all { it.regionId == region.id })
-        vm.selectRegion("unknown-region")
-        assertEquals(region.id, vm.uiState.value.selectedRegionId)
-        vm.selectTab(ArchiveTab.Trips)
-        assertEquals(13, vm.uiState.value.visibleTrips.size)
-        vm.selectTab(ArchiveTab.Map); vm.selectRegion(null)
-        assertEquals(13, vm.uiState.value.visibleTrips.size)
-        assertNull(vm.uiState.value.selectedRegionId)
+        assertEquals(listOf("newer", "older", "unknown"), vm.uiState.value.visibleStories.map { it.id })
+        vm.selectSort(ArchiveSort.Oldest)
+        assertEquals(listOf("older", "newer", "unknown"), vm.uiState.value.visibleStories.map { it.id })
     }
 
-    @Test fun tabSortAndRegion_stayInCurrentViewModel_onlyAndMissingRegionIsClearedOnRefresh() = runTest(dispatcher) {
-        var response = sampleArchiveResponse
-        val vm = ArchiveViewModel(ArchiveRepository({ response }, true))
+    @Test fun regionSelection_usesSavedStoryLocations_includingTripsOutsideLatestFifty() = runTest(dispatcher) {
+        val trips = ArchiveResponseDto(listOf(trip("recent-trip")))
+        val map = ArchiveMapResponseDto(2, 2,
+            listOf(ArchiveRegionDto("천안", 1, 36.8, 127.1), ArchiveRegionDto("미상", 1, null, null)),
+            listOf(story("one", "old-trip", "천안", 36.8, 127.1), story("two", "recent-trip", "미상", null, null)))
+        val vm = ArchiveViewModel(ArchiveRepository({ trips }, { map }))
         runCurrent()
         vm.selectTab(ArchiveTab.Map)
-        vm.selectRegion(vm.uiState.value.content.regions.first().id)
-        vm.selectSort(ArchiveSort.Oldest); runCurrent()
-        assertEquals(ArchiveTab.Map, vm.uiState.value.tab)
-        assertEquals(ArchiveSort.Oldest, vm.uiState.value.sort)
-        assertNotNull(vm.uiState.value.selectedRegionId)
-        val fresh = ArchiveViewModel(sampleRepository())
+        vm.selectRegion("천안")
+        assertEquals("old-trip", vm.uiState.value.visibleStories.single().tripId)
+        assertEquals("recent-trip", vm.uiState.value.visibleTrips.single().id)
+        vm.selectRegion("unknown")
+        assertEquals("천안", vm.uiState.value.selectedRegionId)
+        vm.selectRegion("미상")
+        assertNull(vm.uiState.value.visibleStories.single().latitude)
+        vm.selectRegion(null)
+        assertEquals(2, vm.uiState.value.visibleStories.size)
+    }
+
+    @Test fun refreshClearsRemovedRegion_butKeepsTabAndSort() = runTest(dispatcher) {
+        var map = sampleArchiveMapResponse
+        val vm = ArchiveViewModel(ArchiveRepository({ sampleArchiveResponse }, { map }, true))
         runCurrent()
-        assertEquals(ArchiveTab.Trips, fresh.uiState.value.tab)
-        assertEquals(ArchiveSort.Latest, fresh.uiState.value.sort)
-        assertNull(fresh.uiState.value.selectedRegionId)
-        response = ArchiveResponseDto(emptyList())
+        vm.selectTab(ArchiveTab.Map)
+        vm.selectRegion("부산")
+        vm.selectSort(ArchiveSort.Oldest)
+        map = ArchiveMapResponseDto(0, 0, emptyList(), emptyList())
         vm.retry(); runCurrent()
         assertNull(vm.uiState.value.selectedRegionId)
         assertEquals(ArchiveTab.Map, vm.uiState.value.tab)
         assertEquals(ArchiveSort.Oldest, vm.uiState.value.sort)
+        assertTrue(vm.uiState.value.visibleStories.isEmpty())
     }
 
-    @Test fun tripIds_areOpaqueNonblankStrings_andAreNotRewritten() {
-        val id = "여행: 2026/가족 + " + "a".repeat(160)
-        val content = ArchiveResponseDto(listOf(trip(id))).toModel()
-        assertEquals(id, content.trips.single().id)
-    }
-
-    @Test fun remoteUrl_requiresHttpsHostTrailingSlash_andRejectsCredentialsQueryOrFragment() {
-        listOf("http://example.com/", "https:///", "https://user:pass@example.com/", "https://example.com/api",
-            "https://example.com/?sort=latest", "https://example.com/#archive").forEach { url ->
-            assertThrows("Invalid base URL must fail: $url", Exception::class.java) { ArchiveRepository.remote(url) }
-        }
-        assertNotNull(ArchiveRepository.remote("https://example.com/api/"))
-    }
-
-    @Test fun oldNonCooperativeRequest_cannotOverwriteNewSortOrReportAnError() = runTest(dispatcher) {
+    @Test fun cancelledNonCooperativeRequest_cannotOverwriteNewResult() = runTest(dispatcher) {
         val old = CompletableDeferred<ArchiveResponseDto>()
-        val newer = ArchiveResponseDto(listOf(trip("new-trip")))
-        val vm = ArchiveViewModel(ArchiveRepository({ sort ->
-            if (sort == ArchiveSort.Latest) withContext(NonCancellable) { old.await() } else newer
-        }, false))
+        var requests = 0
+        val vm = ArchiveViewModel(ArchiveRepository({
+            if (requests++ == 0) withContext(NonCancellable) { old.await() }
+            else ArchiveResponseDto(listOf(trip("new-trip")))
+        }, { ArchiveMapResponseDto(0, 0, emptyList(), emptyList()) }))
         runCurrent()
-        assertTrue(vm.uiState.value.isLoading)
-        vm.selectSort(ArchiveSort.Oldest); runCurrent()
+        vm.retry(); runCurrent()
         assertEquals("new-trip", vm.uiState.value.content.trips.single().id)
         old.complete(sampleArchiveResponse); runCurrent()
         assertEquals("new-trip", vm.uiState.value.content.trips.single().id)
-        assertEquals(ArchiveSort.Oldest, vm.uiState.value.sort)
         assertNull(vm.uiState.value.error)
         assertFalse(vm.uiState.value.isLoading)
     }
 
-    @Test fun oldNonCooperativeRequest_throwsAfterCancellation_cannotOverwriteCurrentResult() = runTest(dispatcher) {
+    @Test fun cancelledNonCooperativeFailure_cannotReportErrorAfterSuccessfulRetry() = runTest(dispatcher) {
         val old = CompletableDeferred<Unit>()
-        val newer = ArchiveResponseDto(listOf(trip("new-trip")))
-        val vm = ArchiveViewModel(ArchiveRepository({ sort ->
-            if (sort == ArchiveSort.Latest) withContext(NonCancellable) {
-                old.await()
-                error("old request failed after cancellation")
-            } else newer
-        }, false))
+        var requests = 0
+        val vm = ArchiveViewModel(ArchiveRepository({
+            if (requests++ == 0) withContext(NonCancellable) { old.await(); error("old failed") }
+            else ArchiveResponseDto(listOf(trip("new-trip")))
+        }, { ArchiveMapResponseDto(0, 0, emptyList(), emptyList()) }))
         runCurrent()
-        vm.selectSort(ArchiveSort.Oldest); runCurrent()
-        assertEquals("new-trip", vm.uiState.value.content.trips.single().id)
-        assertNull(vm.uiState.value.error)
+        vm.retry(); runCurrent()
         old.complete(Unit); runCurrent()
         assertEquals("new-trip", vm.uiState.value.content.trips.single().id)
-        assertEquals(ArchiveSort.Oldest, vm.uiState.value.sort)
         assertNull(vm.uiState.value.error)
         assertFalse(vm.uiState.value.isLoading)
     }
@@ -200,7 +122,7 @@ class ArchiveViewModelTest {
         var fail = true
         val vm = ArchiveViewModel(ArchiveRepository({
             if (fail) error("network unavailable") else ArchiveResponseDto(listOf(trip("server-trip")))
-        }, false))
+        }, { ArchiveMapResponseDto(0, 0, emptyList(), emptyList()) }))
         runCurrent()
         assertNotNull(vm.uiState.value.error)
         assertFalse(vm.uiState.value.isLoading)
@@ -211,23 +133,19 @@ class ArchiveViewModelTest {
         assertFalse(vm.uiState.value.content.isSample)
     }
 
-    @Test fun sampleFlagIsExplicit_andSampleTotalsMatchTheDesign() = runTest(dispatcher) {
-        val repository = ArchiveRepository({ sampleArchiveResponse }, true)
-        val content = repository.load(ArchiveSort.Latest)
-        assertTrue(content.isSample)
-        assertEquals(13, content.tripCount)
-        assertEquals(51, content.storyCount)
-        assertEquals(content.tripCount, content.regions.sumOf { it.tripCount })
+    @Test fun unconfiguredDefaultRepository_showsErrorWithNoPreviewTrips() = runTest(dispatcher) {
+        if (BuildConfig.TRIP_API_BASE_URL.isNotBlank()) return@runTest
+        val vm = ArchiveViewModel()
+        runCurrent()
+        assertNotNull(vm.uiState.value.error)
+        assertTrue(vm.uiState.value.content.trips.isEmpty())
+        assertFalse(vm.uiState.value.content.isSample)
     }
 
-    private fun sampleRepository() = ArchiveRepository({ sampleArchiveResponse }, true)
+    private fun trip(id: String) = ArchiveTripDto(id, "서울", null, null, "부산", null, null,
+        "finished", "2026-11-14T05:30:00+00:00", "2026-11-14T08:10:00+00:00", 1)
 
-    private fun trip(id: String) = ArchiveTripDto(
-        id = id,
-        title = "가족 여행",
-        departureName = "광주 용봉동",
-        destinations = listOf(ArchiveDestinationDto("부산 해운대", 35.16, 129.16, "26000", "부산")),
-        date = "2026-11-11",
-        storyCount = 1,
-    )
+    private fun story(id: String, tripId: String, region: String, latitude: Double?, longitude: Double?) =
+        ArchiveMapStoryDto(id, tripId, "가족 이야기", region, latitude, longitude,
+            "가족과 나눈 이야기", listOf("즐거웠어"), "2026-11-14T14:30:00+09:00")
 }

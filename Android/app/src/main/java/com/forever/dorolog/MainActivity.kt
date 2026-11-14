@@ -185,17 +185,17 @@ private fun ArchiveBrowser(
         viewModelStoreOwner = owner,
         factory = viewModelFactory { initializer { ArchiveViewModel(repository ?: ArchiveRepository()) } },
     )
-    var selectedTrip by remember { mutableStateOf<ArchiveTrip?>(null) }
+    var selectedTrip by remember { mutableStateOf<Pair<String, String?>?>(null) }
     val stateHolder = rememberSaveableStateHolder()
     BackHandler { if (selectedTrip == null) onHome() else selectedTrip = null }
     val trip = selectedTrip
     if (trip == null) {
         stateHolder.SaveableStateProvider("archive") {
-            ArchiveRoute(onBack = onHome, onTripClick = { selectedTrip = it }, modifier = modifier,
+            ArchiveRoute(onBack = onHome, onTripClick = { id, destination -> selectedTrip = id to destination }, modifier = modifier,
                 browsingAllowed = browsingAllowed, viewModel = archiveViewModel)
         }
     } else {
-        TripSummaryScreen(tripId = trip.id, destinationName = trip.destinationName,
+        TripSummaryScreen(tripId = trip.first, destinationName = trip.second,
             onDone = onHome, onBack = { selectedTrip = null }, modifier = modifier,
             animationsEnabled = animationsEnabled, browsingAllowed = browsingAllowed,
             repository = summaryRepository)
