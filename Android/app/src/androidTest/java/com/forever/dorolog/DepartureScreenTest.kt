@@ -1,5 +1,6 @@
 package com.forever.dorolog
 
+import android.graphics.Bitmap
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.requiredSize
@@ -8,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
@@ -21,6 +23,8 @@ import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.*
@@ -176,6 +180,7 @@ class DepartureScreenTest {
         compose.onNodeWithTag("conversation-wave").assertIsDisplayed()
         compose.onNodeWithText("뒤로가기").assertDoesNotExist()
         compose.onNodeWithText("종료하기").assertDoesNotExist()
+        compose.onNodeWithText("지금은 기록하지 않아요. 준비되면 다시 들을게요.").assertDoesNotExist()
         // Pleos can reposition the embedded test window while dispatching touch events.
         compose.onNodeWithTag("pause-conversation").performSemanticsAction(SemanticsActions.OnClick) { it() }
         compose.runOnIdle {
@@ -184,10 +189,64 @@ class DepartureScreenTest {
         }
         compose.onNodeWithTag("resume-conversation").assertIsNotEnabled()
         compose.onNodeWithTag("finish-conversation").assertIsDisplayed()
+        compose.onNodeWithText("지금은 기록하지 않아요. 준비되면 다시 들을게요.").assertIsDisplayed()
+        compose.onNodeWithText("통화 중").assertIsDisplayed()
+        compose.runOnIdle { state = state.copy(status = "차량 안전 경고가 해제되면 재개할 수 있어요") }
+        compose.onNodeWithText("지금은 기록하지 않아요. 준비되면 다시 들을게요.").assertIsDisplayed()
+        compose.onNodeWithText("차량 안전 경고가 해제되면 재개할 수 있어요").assertIsDisplayed()
         compose.runOnIdle { state = state.copy(resumeEnabled = true, status = null) }
         compose.onNodeWithTag("resume-conversation").assertIsEnabled()
             .performSemanticsAction(SemanticsActions.OnClick) { it() }
         compose.runOnIdle { assertEquals(1, resumes) }
+        compose.runOnIdle { state = state.copy(paused = false) }
+        compose.onNodeWithText("지금은 기록하지 않아요. 준비되면 다시 들을게요.").assertDoesNotExist()
+    }
+
+    @Test fun pausedTooltipAndControls_fitNarrowAndShortWindows_withLargeText() {
+        var viewport by androidx.compose.runtime.mutableStateOf(850 to 592)
+        var fontScale by androidx.compose.runtime.mutableStateOf(1f)
+        val topics = sampleDepartureResponse.toModel()
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f, fontScale)) {
+                Box(Modifier.requiredSize(viewport.first.dp, viewport.second.dp).testTag("pause-viewport")) {
+                    TalkScreen(DepartureViewModel.UiState(topics = topics, selectedTopicId = topics.first().id,
+                        loading = false, phase = DepartureViewModel.Phase.Talk),
+                        DrivingViewModel.UiState(question = topics.first().question, paused = true,
+                            status = "통화가 끝나면 재개할 수 있어요"), {}, {}, {})
+                }
+            }
+        }
+        compose.onNodeWithText("지금은 기록하지 않아요. 준비되면 다시 들을게요.").assertIsDisplayed()
+        val screenshot = compose.onNodeWithTag("talk-screen").captureToImage().asAndroidBitmap()
+        File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "paused-recording-tooltip.png")
+            .outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        for (size in listOf(360 to 640, 640 to 360)) {
+            compose.runOnIdle { viewport = size; fontScale = 2f }
+            val frame = compose.onNodeWithTag("pause-viewport").getUnclippedBoundsInRoot()
+            val tooltip = compose.onNodeWithText("지금은 기록하지 않아요. 준비되면 다시 들을게요.")
+                .assertIsDisplayed().getUnclippedBoundsInRoot()
+            val finish = compose.onNodeWithTag("finish-conversation").assertIsDisplayed().getUnclippedBoundsInRoot()
+            val pause = compose.onNodeWithTag("resume-conversation").assertIsDisplayed().getUnclippedBoundsInRoot()
+            assertTrue("Pause touch target too small at $size", pause.right - pause.left >= 48.dp && pause.bottom - pause.top >= 48.dp)
+            val label = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            compose.onNodeWithText("일시정지", useUnmergedTree = true).assertIsDisplayed()
+                .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(label) }
+            val detail = label.single()
+            val scaledImage = compose.onNodeWithTag("talk-screen").captureToImage().asAndroidBitmap()
+            File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "paused-recording-tooltip-large.png")
+                .outputStream().use { scaledImage.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            // Paragraph width includes empty space; compare actual text lines, allowing pixel rounding.
+            assertTrue("Pause label is clipped at $size", (0 until detail.lineCount).all { line ->
+                detail.getLineLeft(line) >= -1f && detail.getLineRight(line) <= detail.size.width + 1f &&
+                    detail.getLineBottom(line) <= detail.size.height + 1f
+            })
+            assertTrue("Tooltip overlaps finish at $size", tooltip.bottom <= finish.top)
+            assertTrue("Tooltip overlaps pause at $size", pause.bottom <= tooltip.top)
+            for (bounds in listOf(tooltip, finish, pause)) {
+                assertTrue("Controls leave viewport at $size", bounds.left >= frame.left && bounds.right <= frame.right &&
+                    bounds.top >= frame.top && bounds.bottom <= frame.bottom)
+            }
+        }
     }
 
     @Test fun parkedShowsEmptyTrip_withoutInventedSavedStories() {

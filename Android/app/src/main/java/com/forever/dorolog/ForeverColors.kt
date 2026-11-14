@@ -1,6 +1,9 @@
 package com.forever.dorolog
 
 internal object ForeverColors {
+    val pausedHintBackground = Purple300
+    val pausedHintContent = White100
+    val pausedHintOutline = White100.copy(alpha = 0.4f)
     val summaryBackground = Gray050
     val summarySurface = White100
     val summaryInk = Black900

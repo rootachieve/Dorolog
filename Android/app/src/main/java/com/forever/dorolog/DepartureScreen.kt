@@ -47,7 +47,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -486,6 +489,7 @@ internal fun TalkScreen(
 ) {
     val display = uiState.copy(topics = listOf(RecommendedTopic("current", drivingState.question)),
         selectedTopicId = "current", loading = false, contentError = false)
+    val status = drivingState.status ?: if (drivingState.waitingForAudio) stringResource(R.string.audio_waiting) else null
     BoxWithConstraints(modifier.fillMaxSize().clip(RoundedCornerShape(40.dp)).testTag("talk-screen")) {
         val scale = minOf(maxWidth.value / 1700f, maxHeight.value / 1184f)
         DepartureScreen(display, {}, {}, {}, {}, {},
@@ -496,53 +500,69 @@ internal fun TalkScreen(
         if (drivingState.paused) {
             Box(Modifier.fillMaxSize().background(
                 if (drivingState.resumeEnabled) Color(0x91181641) else Color(0x9168678D)))
-            Column(Modifier.align(Alignment.TopCenter).offset(y = maxHeight * (351f / 1184f))
-                .widthIn(min = 144.dp).clip(RoundedCornerShape(20.dp))
-                .clickable(enabled = drivingState.resumeEnabled, role = Role.Button,
-                    onClickLabel = stringResource(R.string.resume_conversation), onClick = onResume)
-                .testTag("resume-conversation")
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+            Column(Modifier.fillMaxSize().padding(horizontal = 24.dp)
+                .padding(bottom = (109 * scale).dp.coerceAtLeast(16.dp)),
                 horizontalAlignment = Alignment.CenterHorizontally) {
-                if (drivingState.resumeEnabled) {
-                    Image(painterResource(R.drawable.driving_resume), contentDescription = null,
-                        modifier = Modifier.size((251 * scale).dp, (269 * scale).dp))
-                } else {
-                    Row(Modifier.size((232 * scale).dp, (269 * scale).dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        repeat(2) { Box(Modifier.fillMaxHeight().width((57 * scale).dp)
-                            .clip(RoundedCornerShape(94.dp)).background(Color(0xFFF9FBFE))) }
+                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
+                    Column(Modifier.heightIn(max = maxHeight).widthIn(min = 144.dp).clip(RoundedCornerShape(20.dp))
+                        .clickable(enabled = drivingState.resumeEnabled, role = Role.Button,
+                            onClickLabel = stringResource(R.string.resume_conversation), onClick = onResume)
+                        .testTag("resume-conversation").padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally) {
+                        BoxWithConstraints(Modifier.weight(269f, fill = false).heightIn(max = (269 * scale).dp)
+                            .width((251 * scale).dp), contentAlignment = Alignment.Center) {
+                            val iconScale = minOf(scale, maxHeight.value / 269f, maxWidth.value / 251f)
+                            if (drivingState.resumeEnabled) {
+                                Image(painterResource(R.drawable.driving_resume), contentDescription = null,
+                                    modifier = Modifier.size((251 * iconScale).dp, (269 * iconScale).dp))
+                            } else {
+                                Row(Modifier.size((232 * iconScale).dp, (269 * iconScale).dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    repeat(2) { Box(Modifier.fillMaxHeight().width((57 * iconScale).dp)
+                                        .clip(RoundedCornerShape(94.dp)).background(Color(0xFFF9FBFE))) }
+                                }
+                            }
+                        }
+                        Spacer(Modifier.weight(70f, fill = false).height((70 * scale).dp.coerceAtLeast(16.dp)))
+                        Text(stringResource(if (drivingState.resumeEnabled) R.string.resume_conversation else R.string.conversation_paused),
+                            color = Color.White, fontFamily = DepartureFont, fontWeight = FontWeight.SemiBold,
+                            fontSize = (64 * scale).coerceAtLeast(24f).sp)
                     }
                 }
-                Spacer(Modifier.height((70 * scale).dp.coerceAtLeast(16.dp)))
-                Text(stringResource(if (drivingState.resumeEnabled) R.string.resume_conversation else R.string.conversation_paused),
-                    color = Color.White, fontFamily = DepartureFont, fontWeight = FontWeight.SemiBold,
-                    fontSize = (64 * scale).coerceAtLeast(24f).sp)
-            }
-            Button(onClick = onFinish, colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.2f)),
-                border = androidx.compose.foundation.BorderStroke((5 * scale).dp, Color.White.copy(alpha = 0.4f)),
-                shape = RoundedCornerShape(66.dp),
-                modifier = Modifier.align(Alignment.BottomCenter).offset(y = -(109 * scale).dp)
-                    .widthIn(min = (276 * scale).dp.coerceAtLeast(144.dp))
-                    .heightIn(min = 48.dp).testTag("finish-conversation"),
-                contentPadding = PaddingValues(horizontal = (24 * scale).dp, vertical = (16 * scale).dp)) {
-                Image(painterResource(R.drawable.driving_close), contentDescription = null,
-                    modifier = Modifier.size((49 * scale).dp.coerceAtLeast(20.dp)))
-                Text(stringResource(R.string.finish_conversation), color = Color.White,
-                    fontFamily = DepartureFont, fontWeight = FontWeight.SemiBold,
-                    fontSize = (40 * scale).coerceAtLeast(20f).sp)
+                status?.let {
+                    Text(it, color = Color.White, fontFamily = DepartureFont, textAlign = TextAlign.Center,
+                        fontSize = 16.sp, modifier = Modifier.testTag("driving-status"))
+                    Spacer(Modifier.height(8.dp))
+                }
+                Text(stringResource(R.string.recording_paused_hint), color = ForeverColors.pausedHintContent,
+                    fontFamily = DepartureFont, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
+                    fontSize = (40 * scale).coerceAtLeast(16f).sp,
+                    modifier = Modifier.clip(RoundedCornerShape(66.dp)).background(ForeverColors.pausedHintBackground)
+                        .border((5 * scale).dp.coerceAtLeast(1.dp), ForeverColors.pausedHintOutline, RoundedCornerShape(66.dp))
+                        .padding(horizontal = (64 * scale).dp.coerceAtLeast(16.dp), vertical = (24 * scale).dp.coerceAtLeast(10.dp))
+                        .testTag("recording-paused-tooltip").semantics { liveRegion = LiveRegionMode.Polite })
+                Spacer(Modifier.height((48 * scale).dp.coerceAtLeast(16.dp)))
+                Button(onClick = onFinish, colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.2f)),
+                    border = androidx.compose.foundation.BorderStroke((5 * scale).dp, Color.White.copy(alpha = 0.4f)),
+                    shape = RoundedCornerShape(66.dp),
+                    modifier = Modifier.widthIn(min = (276 * scale).dp.coerceAtLeast(144.dp))
+                        .heightIn(min = 48.dp).testTag("finish-conversation"),
+                    contentPadding = PaddingValues(horizontal = (24 * scale).dp, vertical = (16 * scale).dp)) {
+                    Image(painterResource(R.drawable.driving_close), contentDescription = null,
+                        modifier = Modifier.size((49 * scale).dp.coerceAtLeast(20.dp)))
+                    Text(stringResource(R.string.finish_conversation), color = Color.White,
+                        fontFamily = DepartureFont, fontWeight = FontWeight.SemiBold,
+                        fontSize = (40 * scale).coerceAtLeast(20f).sp)
+                }
             }
         } else {
             Box(Modifier.align(Alignment.Center).fillMaxWidth().fillMaxHeight(0.72f)
                 .clickable(role = Role.Button, onClickLabel = stringResource(R.string.pause_conversation), onClick = onPause)
                 .testTag("pause-conversation"))
         }
-        val status = drivingState.status ?: if (drivingState.waitingForAudio) stringResource(R.string.audio_waiting) else null
-        status?.let {
-            val bottom = if (drivingState.paused) {
-                (109 * scale).dp + (102 * scale).dp.coerceAtLeast(48.dp) + 16.dp
-            } else 16.dp
-            Text(it, color = if (drivingState.paused) Color.White else Color(0xFF575760),
+        if (!drivingState.paused) status?.let {
+            Text(it, color = Color(0xFF575760),
                 fontFamily = DepartureFont, textAlign = TextAlign.Center, fontSize = 16.sp,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(start = 24.dp, end = 24.dp, bottom = bottom)
+                modifier = Modifier.align(Alignment.BottomCenter).padding(start = 24.dp, end = 24.dp, bottom = 16.dp)
                     .testTag("driving-status"))
         }
     }
