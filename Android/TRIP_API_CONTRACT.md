@@ -1,205 +1,367 @@
-# 여행·주차 이야기 서버 계약
+# Dorolog Android–서버 API 규격
 
-이 문서는 서버 담당자가 구현할 인터페이스와 현재 Android 클라이언트가 기대하는 메시지 규칙을 정리한다. 서버 구현 코드는 포함하지 않으며, 서버의 언어·프레임워크·저장소·AI 모델은 별도로 결정한다. 경로와 메시지 형식을 변경하면 앱도 함께 수정해야 한다. 화면 통합 범위와 메타데이터 공급 책임은 [WORKTREE_INTEGRATION.md](WORKTREE_INTEGRATION.md), 이야기 지도 상세 계약은 [ARCHIVE_API.md](ARCHIVE_API.md), 결산 표시 규칙은 [TRIP_SUMMARY_INTEGRATION.md](TRIP_SUMMARY_INTEGRATION.md)를 따른다. `-Pdorolog.apiBaseUrl=https://host/api/`로 HTTPS 기본 주소를 지정한다. 미설정 시 주차 화면은 불러오기·저장 실패를 표시하고 저장 성공으로 처리하지 않는다. 음성 주소는 기존 `-Pdorolog.voiceUrl=wss://host/conversation`을 사용한다.
+Android 앱과 Python 서버를 연결할 때 사용하는 최종 규격이다.
 
-## 여행 선택과 식별자
+기준 원문은 `origin/feat/ai-server:server/API_CONTRACT.md` (`b311c476bc1e4af399c0120181db746bed96f39a`)이며, 서버 규격과 Android 화면 연결을 함께 변경할 때 이 문서도 갱신한다.
 
-홈의 시작 버튼은 여행 선택 경로를 연다. 실제 새 여행 생성·기존 여행 선택·이어가기 UI는 아직 구현되지 않았으므로 통합 시 연결 대기 화면과 선택 완료 콜백을 둔다. 콜백은 실제 선택한 `tripId`를 `DepartureRoute(tripId = ...)`에 전달한다. 이 화면은 여행 ID를 생성하거나 임의의 샘플 ID로 주행을 시작하지 않는다. 목적지가 바뀌어도 선택한 여행 ID는 같다.
+## Android 여행 선택 흐름
 
-`DorologApp(selectedTripId = ...)`로 제공되는 ID도 선택 완료 경로에서 사용하며, 시작할 때 확정한 ID는 해당 여행 화면을 나갈 때까지 유지한다. 앱을 다시 실행하면 홈에서 선택을 시작한다. 로컬 여행 복원이나 자동 재진입을 추가하지 않는다.
+- 홈의 시작 버튼은 최근 여행 선택 화면을 연다. `GET /api/trips?limit=6`의 순서를 그대로 표시하며, 종료한 여행도 이어갈 수 있다. 목록 응답의 `status`를 유지해 다음 호출을 결정한다.
+- 새 여행은 SDK의 현재 위치와 내비게이션 조회 결과를 확인한 뒤 한 번의 `POST /api/trips`로 생성한다. 목적지가 없으면 사용자가 ‘목적지 없이 시작’을 확인할 때 생성하며, 확인창을 닫으면 생성하지 않는다. 좌표는 유효한 위도·경도 쌍 또는 둘 다 없는 경우만 허용한다.
+- 생성 응답의 `id`와 응답에 저장된 목적지를 주행 화면에 전달하고, `POST /api/trips/{tripId}/topics`로 추천 질문을 조회한다. 별도 초안 생성, `requestId`, `/start` 호출은 사용하지 않는다.
+- 생성 요청의 응답이 유실되면 서버에 여행이 생성되었을 수 있다. 같은 선택 화면에서는 자동 생성 재시도와 다시 생성을 막고, 최근 목록을 새로 불러와 기존 여행의 이어가기로 복구한다. 서버가 멱등성 키를 지원하지 않아 화면을 나갔다가 다시 생성하면 중복될 수 있다.
+- `status`가 `active`인 여행을 선택하면 기존 여행 ID와 저장된 목적지로 바로 주행 화면에 진입해 `POST /api/trips/{tripId}/topics`를 호출한다. `/resume`은 호출하지 않는다.
+- `status`가 `finished`인 여행을 선택하면 본문 없는 `POST /api/trips/{tripId}/resume`으로 상태를 변경한다. 응답이 확인된 뒤 같은 여행 ID와 응답에 저장된 목적지로 주행 화면에 진입해 `POST /api/trips/{tripId}/topics`를 호출한다.
+- 질문 조회 시 현재 내비게이션 목적지의 이름·주소·좌표를 본문으로 전송한다. 목적지가 없으면 `destination: null`로 서버의 현재 목적지를 비운다. 내비게이션 상태를 확인하지 못한 동안은 기존 목적지를 지우지 않도록 요청을 보류한다.
+- 현재 위치·목적지를 확인할 수 없거나 서버 요청·응답 검증이 실패하면 오류를 표시하며, 임의 여행 ID로 기록을 시작하지 않는다.
 
-이야기 목록과 저장 대상은 여행 전체를 기준으로 한다. 기존 여행을 선택하면 서버에서 전체 목록과 `savedStoryIds`를 받아 선택 상태를 표시한다. 사용자가 저장하지 않은 선택 변경은 서버에 반영하지 않는다. 서버 저장이 실패하면 성공 상태로 표시하지 않는다.
+## 주소 설정
 
-홈의 여행 생성·선택·이어가기에 사용할 API 경로와 요청·응답은 아직 합의되지 않았고 해당 Android API 호출도 구현하지 않았다. 향후 홈·서버 구현은 실제 여행 ID 발급/조회, 사용자별 접근 권한, 출발 시점의 `departureName` 및 시작 정보 저장, 기존 여행을 이어갈 때의 활성화와 완료 상태 전환을 맡아야 한다. 기존 여행의 이야기·저장 대상과 ID를 유지하면서 완료 여행을 다시 활성화할 수 있는 조건도 함께 정해야 한다. 이 문서에 있는 여행 이야기 조회나 종료 API를 여행 생성 API로 사용하지 않는다.
+Android 빌드 설정:
 
-## 추천 주제 조회
+```text
+-Pdorolog.apiBaseUrl=https://서버주소/api/
+-Pdorolog.voiceUrl=wss://서버주소/conversation
+```
 
-현재 `DepartureApi.recommendTopics`는 `@POST`와 동적 `@Url`을 사용하며 고정 경로가 없다. 서버와 조율할 **제안 경로**는 `POST topics/recommendations`다. 이 경로가 서버에 존재하거나 앱에서 자동으로 호출된다는 뜻이 아니다.
+- REST 기본 주소는 `/api/`로 끝나야 한다.
+- 음성 주소는 `/conversation` WebSocket 주소다.
+- OpenAI API 키는 Android에 넣지 않고 Python 서버의 `.env`에만 둔다.
+- JSON 필드는 REST에서 camelCase, WebSocket 제어 메시지에서 아래 예시와 같은 snake_case를 사용한다.
+- 시각은 ISO 8601 문자열을 사용한다.
+- 위도와 경도는 둘 다 보내거나 둘 다 `null`로 보낸다.
 
-현재 `RecommendationRequestDto`의 요청 모델:
+## 화면별 호출 순서
+
+| 시점 | Android 호출 | 용도 |
+| --- | --- | --- |
+| 새로 시작 | `POST /api/trips` | 새 여행 ID 발급 |
+| 최근 주행 화면 | `GET /api/trips?limit=6` | 최근 여행 카드 표시 |
+| 진행 중인 여행 선택 | `POST /api/trips/{tripId}/topics` | 기존 ID로 바로 추천 질문 조회 |
+| 종료한 여행 이어가기 | `POST /api/trips/{tripId}/resume` | 기존 여행을 다시 활성화한 뒤 추천 질문 조회 |
+| 질문 화면 진입 | `POST /api/trips/{tripId}/topics` | 현재 내비게이션 목적지 갱신 후 추천 질문 4개 조회 |
+| 대화 시작 | `WSS /conversation` | PCM 전송, STT·VAD·후속 질문·TTS |
+| 정차 화면 진입 | `GET /api/trips/{tripId}/stories` | 남은 대화 정리 후 이야기 후보 조회 |
+| 이야기 저장 | `PUT /api/trips/{tripId}/saved-stories` | 남길 이야기 전체 선택 결과 저장 |
+| 여행 종료 | `POST /api/trips/{tripId}/finish` | 남은 대화 저장과 기록 종료 |
+| 최종 리포트·보관함 상세 | `GET /api/trips/{tripId}` | 여행 정보와 이야기 상세 조회 |
+| 이야기 보관함 여행별 탭 | `GET /api/trips?limit=50` | 여행 목록 조회 |
+| 이야기 보관함 전국 지도 | `GET /api/stories/map` | 저장 이야기와 지역별 개수 조회 |
+
+## 1. 새 여행 생성
+
+```http
+POST /api/trips
+```
+
+목적지가 없으면 목적지 필드를 보내지 않는다.
 
 ```json
 {
+  "originName": "서울",
+  "originLatitude": 37.5665,
+  "originLongitude": 126.978,
   "destinationName": "부산",
-  "previousConversationIds": ["conversation-1", "conversation-2"]
+  "destinationAddress": "부산광역시 동구",
+  "destinationLatitude": 35.1796,
+  "destinationLongitude": 129.0756
 }
 ```
 
-`destinationName`은 현재 목적지 이름이며 목적지를 알 수 없으면 null/생략할 수 있다. `previousConversationIds`는 이전 대화를 참조할 문자열 ID 목록이며 기본값은 `[]`다. 현재 주행 경로는 별도의 대화 이력 목록을 공급하지 않아 기본 빈 목록을 사용한다. 이 요청 DTO에는 여행 ID·이야기 ID·좌표 필드가 없다. 이런 문맥을 추가하려면 서버와 클라이언트 DTO를 함께 조정해야 한다.
-
-현재 `DepartureResponseDto`가 검증하는 응답 모델:
+응답 `201 Created`:
 
 ```json
 {
-  "topics": [
-    {"id": "topic-1", "question": "도착하면 가족과 가장 먼저 무엇을 해보고 싶나요?"},
-    {"id": "topic-2", "question": "지난 여행에서 기억에 남는 순간은 언제였나요?"}
+  "id": "trip-id",
+  "originName": "서울",
+  "originLatitude": 37.5665,
+  "originLongitude": 126.978,
+  "destinationName": "부산",
+  "destinationAddress": "부산광역시 동구",
+  "destinationLatitude": 35.1796,
+  "destinationLongitude": 129.0756,
+  "status": "active",
+  "startedAt": "2026-11-14T05:30:00+00:00",
+  "endedAt": null,
+  "storyCount": 0
+}
+```
+
+응답의 `id`를 이후 REST의 `{tripId}`와 WebSocket `trip_id`로 계속 사용한다.
+
+## 2. 최근 여행 목록
+
+```http
+GET /api/trips?limit=6
+```
+
+최근 사용한 순서로 반환한다. `storyCount`는 사용자가 남기기로 확정한 이야기 수다.
+
+```json
+{
+  "trips": [
+    {
+      "id": "trip-id",
+      "originName": "서울",
+      "originLatitude": 37.5665,
+      "originLongitude": 126.978,
+      "destinationName": "부산",
+  "destinationAddress": "부산광역시 동구",
+      "destinationLatitude": 35.1796,
+      "destinationLongitude": 129.0756,
+      "status": "finished",
+      "startedAt": "2026-11-14T05:30:00+00:00",
+      "endedAt": "2026-11-14T08:10:00+00:00",
+      "storyCount": 4
+    }
   ]
 }
 ```
 
-`topics`는 필수 배열이며 빈 배열일 수 있다. 각 `id`, `question`은 null이나 공백뿐인 문자열이면 안 되며 주제 ID는 같은 응답에서 중복될 수 없다. 앱은 받은 순서로 주제를 표시한다. 비어 있거나 유효한 주제가 없으면 자동 기록 전환을 시작하지 않는다. HTTP 실패나 응답 검증 실패는 오류와 재시도로 표시한다.
+## 3. 종료한 여행 이어가기
 
-`DepartureRepository`의 기본값은 아직 `sampleDepartureResponse`다. `remote(baseUrl, endpoint)` 팩토리는 있지만 현재 `DepartureRoute`에서 추천 저장소를 이 팩토리로 연결하지 않는다. 따라서 `dorolog.apiBaseUrl`을 설정해도 추천 주제는 원격 API로 자동 전환되지 않는다. 서버의 실제 경로와 이력 공급 방식을 합의한 뒤 이 화면의 추천 저장소 주입도 연결해야 한다. 음성 대화 중 서버 질문을 갱신하는 WSS `response.text`는 이 최초 추천 주제 API와 별개다.
+```http
+POST /api/trips/{tripId}/resume
+```
 
-## 여행 이야기 조회
+요청 본문은 없다. 같은 여행 ID와 기존 이야기를 유지하고 `status`를 `active`로 바꾼 여행 정보를 반환한다.
 
-`GET trips/{tripId}/stories`
+Android는 최근 목록에서 `status`가 `finished`인 여행을 선택했을 때만 호출한다. `active`인 여행을 선택하면 상태 변경 없이 기존 ID로 4번 추천 질문을 바로 조회한다. 새 여행은 1번 생성 응답의 ID로 4번 추천 질문을 조회한다.
+
+## 4. 추천 질문
+
+```http
+POST /api/trips/{tripId}/topics
+```
+
+현재 내비게이션 목적지를 보낸다. `name`은 화면에 표시할 장소명이고
+`address`는 내비게이션이 제공한 주소 문자열이다.
 
 ```json
 {
-  "stories": [
-    { "id": "story-1", "title": "부산에서 가보고 싶은 곳", "region": "경상남도 창원시", "latitude": 35.2275, "longitude": 128.6819 }
-  ],
-  "savedStoryIds": ["story-1"]
+  "destination": {
+    "name": "부산역",
+    "address": "부산광역시 동구 중앙대로 206",
+    "latitude": 35.1151,
+    "longitude": 129.0414
+  }
 }
 ```
 
-`stories`, `savedStoryIds`는 빈 배열일 수 있으며 둘 다 필수다. 각 `id`, `title`, `region`은 비어 있지 않은 문자열이며 ID는 여행 안에서 중복되지 않아야 한다. `savedStoryIds`는 같은 응답의 이야기 ID만 포함하며 중복되지 않는다. Android 주차 목록은 ID·제목·지역명을 사용한다. 좌표는 결산·지도 등 후속 화면에서 사용할 수 있다.
+서버는 받은 값으로 `{tripId}`의 현재 목적지를 갱신한 뒤 추천 질문을 만든다.
+목적지가 있으면 목적지 관련 질문 2개와 가족 여행 질문 2개를 반환한다.
 
-현재 등록된 목록을 반환하며 실패는 비정상 HTTP 상태로 전달한다. 음성 처리 결과가 나중에 등록될 수 있어 주차 화면은 새로고침으로 다시 조회할 수 있다.
-
-`stories`는 최근 등록한 이야기부터 반환한다. 기존 이야기 내용을 수정해도 목록 위치는 바뀌지 않는다. Android는 서버가 반환한 순서를 그대로 표시하며 별도 역순 변환이나 정렬을 하지 않는다.
-
-## 저장 대상 전체 교체
-
-`PUT trips/{tripId}/saved-stories`
+내비게이션 목적지가 없으면 아래처럼 `null`로 보낸다. 서버는 이전 현재 목적지를 비우고
+가족 관련 질문 4개를 반환한다.
 
 ```json
-{ "storyIds": ["story-1", "story-3"] }
+{ "destination": null }
 ```
-
-성공 시 `204 No Content`를 반환한다. `storyIds`는 증분이 아닌 여행 전체의 저장 대상 집합이다. 이전 목적지까지 이동하며 나온 이야기도 포함해 전체 집합을 보낸다. `[]`는 모두 저장 해제를 뜻한다. 서버는 해당 여행에 속하지 않은 ID를 거절하고 전부 검증한 뒤 하나의 트랜잭션으로 교체한다. 실패한 요청을 일부 반영하면 안 된다. 같은 요청을 재시도해도 결과는 같아야 한다.
-
-## 여행 종료 확정
-
-`POST trips/{tripId}/finish`
-
-요청 본문은 없다. `{}`나 이야기 선택 목록을 보내지 않는다. 정상 응답은 본문 없는 `204 No Content`다. ID는 주행·주차·이야기 저장에 사용한 선택 여행 ID 그대로이며 종료할 때 새 여행을 만들지 않는다.
-
-클라이언트는 녹음·재생을 중단하고 진행 중인 이야기 저장 요청이 끝난 뒤 종료 요청을 보낸다. Retrofit의 HTTP 성공을 확인한 뒤에만 `DepartureRoute.onTripFinished(tripId)`로 결산에 진입한다. 요청 중 중복 실행을 막고, 비정상 HTTP 응답·시간 초과·연결 끊김이면 결산으로 이동하지 않는다. 녹음이 중단된 종료 대기 화면에서 오류와 재시도·홈 이동을 표시하며 자동으로 녹음을 재개하지 않는다. 재시도는 같은 ID와 같은 본문 없는 요청을 사용한다.
-
-서버는 다음 순서를 보장해야 한다.
-
-1. 요청 사용자가 해당 여행을 종료할 권한이 있는지 확인한다. 아직 인증 전송 방식이 확정되지 않았으므로 실제 서비스 연결 시 REST 클라이언트와 함께 정의한다.
-2. 이 여행에서 서버가 이미 수신·수락한 음성 처리와 AI 이야기 생성·저장을 정리한다. 백그라운드 작업이 끝나지 않았거나 결과 저장이 실패한 상태에서 완료 응답을 보내지 않는다.
-3. 최종 이야기 목록과 마지막으로 성공한 전체 저장 대상 집합을 일관된 상태로 확정한다. `savedStoryIds`는 최종 이야기 ID의 부분집합이며, 저장한 이야기 수는 이 집합의 크기다. 화면에서 고른 뒤 이야기 저장을 누르지 않은 변경을 종료 요청이 대신 저장하지 않는다.
-4. 서버 시각의 `finishedAt`, 여행 완료 상태와 `savedCount = savedStoryIds.size`를 기록하고, 결산 조회와 완료 여행 목록에 같은 최종 저장 대상·개수가 반영되는 상태가 된 뒤 `204`를 반환한다. 목록의 `storyCount`는 이 최종 저장 개수와 같다. 데이터 저장과 완료 상태의 일부만 성공한 것으로 공개하면 안 된다.
-
-같은 여행을 다시 종료해도 결과는 같아야 한다. 이미 완료된 여행의 재요청은 같은 완료 상태를 유지한 채 `204`를 반환하며 새 ID를 생성하거나 `finishedAt`을 다시 갱신하지 않는다. 서버가 완료했지만 응답이 유실된 경우에도 안전하게 재시도할 수 있어야 한다. 인증 실패·권한 없음·없는 여행·처리/저장 실패는 적절한 비정상 HTTP 상태로 전달한다. 이 문서는 서버 언어·저장소·작업 큐 구현을 지정하지 않는다.
-
-## 결산 이야기 조회
-
-`GET trips/{tripId}`
 
 ```json
 {
-  "tripId": "selected-trip-id",
-  "stories": [{
-    "id": "story-1",
-    "title": "다시 떠올린 가족 여행",
-    "region": "서울",
-    "latitude": 37.5665,
-    "longitude": 126.9780,
-    "occurredAt": "2026-11-13T01:23:00Z",
-    "createdAt": "2026-11-13T01:24:00Z",
-    "content": "가족과 함께 지난 여행을 떠올렸어요.",
-    "conversationExcerpts": ["그때 기억나?", "응, 함께 갔던 곳이잖아."]
-  }],
-  "savedStoryIds": ["story-1"]
+  "topics": [
+    { "id": "destination_1", "question": "부산역에 도착하면 가족과 가장 먼저 해보고 싶은 일은 무엇인가요?" },
+    { "id": "destination_2", "question": "부산에서 함께 먹고 싶은 음식은 무엇인가요?" },
+    { "id": "family_travel_1", "question": "다시 떠올리면 웃음 나는 가족 여행은 언제였나요?" },
+    { "id": "family_travel_2", "question": "가족 여행에서 기억에 남는 한 끼는 무엇인가요?" }
+  ]
 }
 ```
 
-`tripId`는 요청 ID와 정확히 같아야 한다. 응답은 구간 없는 여행 전체의 평평한 이야기 목록이며 `segments`, 구간별 ID, 구간별 저장 선택을 사용하지 않는다. `stories`와 `savedStoryIds`는 필수이며 빈 배열일 수 있다. 이야기 ID는 여행 안에서 유일하고, `savedStoryIds`는 같은 응답의 이야기 ID만 중복 없이 포함한다. 별도의 `saved` 플래그나 구간 단위 대체 규칙 대신 이 집합만 저장 여부의 기준으로 사용한다. 결산에는 저장 대상에 포함된 이야기만 표시한다.
+## 5. 음성 WebSocket
 
-`occurredAt`, 이야기별 `createdAt`, `content`, `conversationExcerpts`는 추가 메타데이터다. 시간은 선택적인 ISO 8601 UTC/오프셋 문자열이다. 결산은 `occurredAt`을 우선 사용하고 없으면 실제 최초 등록 시각인 `createdAt`을 사용해 오름차순으로 정렬한다. 두 시간 모두 없으면 시간 있는 이야기 뒤에 표시하며 동일 시간·시간 누락끼리는 서버 순서를 유지한다. 현재 시각이나 가상의 시간을 대입하지 않는다. 시간 표시는 기기 시간대를 사용한다. 주차 목록의 최신 등록순과 결산의 시간순은 서로 다른 표시 규칙이다.
+### 연결 시작
 
-본문은 생략·null·빈 값일 수 있고 핵심 대화는 생략·null·빈 배열일 수 있다. 이때 화면은 준비되지 않았다는 안내를 표시한다. 제공된 대화는 비어 있지 않은 문자열이어야 하며 화면에는 최대 3개를 보여준다. 원문에 없는 대화를 만들어 채우지 않는다. 좌표가 없으면 위도·경도를 모두 null로 처리한다.
-
-## 이야기 지도용 완료 여행 목록
-
-`GET trips?sort=latest` 또는 `GET trips?sort=oldest`
-
-```json
-{
-  "trips": [{
-    "id": "selected-trip-id",
-    "title": "바다를 보며 나눈 이야기",
-    "departureName": "광주 용봉동",
-    "destinations": [{
-      "name": "부산 해운대",
-      "latitude": 35.1587,
-      "longitude": 129.1604,
-      "regionId": "26000",
-      "regionName": "부산"
-    }],
-    "date": "2026-11-13",
-    "storyCount": 1
-  }]
-}
-```
-
-응답은 요청 사용자의 완료된 여행 전체다. `latest`는 여행 날짜 내림차순, `oldest`는 여행 날짜 오름차순이며 같은 날짜의 순서는 서버가 일관되게 보장한다. 주차 이야기의 정렬이나 결산 이야기의 시간순과 혼동하지 않는다. `storyCount`는 해당 여행의 최종 `savedStoryIds` 개수이며 저장하지 않은 대화를 포함하지 않는다. 이야기 합계와 결산에 표시할 저장 이야기 개수가 일치해야 한다.
-
-`destinations`는 방문 순서이며 마지막 원소가 최종 목적지다. 카드와 지역 지도에는 이 목적지의 이름·좌표·시군 코드/이름을 사용한다. 현재 차량 위치나 이야기 발생 위치로 대체하지 않는다. `date`는 서버가 여행 날짜로 정한 유효한 `YYYY-MM-DD`이며 클라이언트가 시간대를 재해석하지 않는다. 출발지·최종 목적지·지역 메타데이터 공급과 여행 날짜의 기준 시간대는 홈·SDK 연동·서버 담당자가 확정해야 한다. 상세 검증·지도 집계·선택 콜백은 [ARCHIVE_API.md](ARCHIVE_API.md), 아직 공급되지 않는 필드는 [WORKTREE_INTEGRATION.md](WORKTREE_INTEGRATION.md)를 따른다.
-
-## 음성 서버의 이야기 등록
-
-`PUT trips/{tripId}/stories/{storyId}`에 `{"title":"이야기 제목","region":"부산광역시"}`를 보내면 이야기를 생성하거나 수정하고 `204`를 반환한다. 위도·경도 쌍과 실제 이야기 시간·최초 등록 시각·본문·핵심 대화를 선택적으로 함께 등록할 수 있다. 수정할 때 기존 저장 선택과 최초 등록 순서는 유지한다. 음성 전사·이야기 생성 처리는 음성 서버가 담당한다. 이 등록 API는 서버 내부 서비스 간 인터페이스 제안이며 Android 앱이 직접 호출하지 않는다. 동일 서버 내부에서 결과를 저장해도 여행 조회·저장 계약은 지켜야 한다.
-
-여행 ID와 이야기 ID는 비어 있지 않은 문자열이며, 이야기 ID는 여행 안에서 유일해야 한다. 정확한 ID 형식은 홈·서버 담당자와 조율한다. 아직 등록된 이야기가 없는 여행은 빈 목록을 반환하고, 생성 파이프라인이 결과를 등록한 뒤 주차 화면에서 재조회할 수 있다. SDK에서 주소를 얻지 못해도 이야기를 누락시키지 않도록 `region`에는 `위치 정보 없음` 같은 대체 문구를 반환한다. 좌표를 알 수 없으면 위도·경도 모두 `null`로 처리한다.
-
-## 음성 WebSocket 메타데이터
-
-기존 `session.start`에 `trip_id`, `current_address`, `latitude`, `longitude`를 추가한다. `trip_id`는 홈에서 전달한 REST의 `tripId`와 같다. 음성 세션 ID는 여행 ID와 별개다.
+Android가 연결 직후 보내는 첫 JSON:
 
 ```json
 {
   "type": "session.start",
   "protocol_version": 1,
-  "trip_id": "selected-trip-id",
-  "topic_id": "topic-1",
-  "question": "어디를 가보고 싶나요?",
+  "session_id": null,
+  "topic_id": "destination_1",
+  "question": "부산에서 가족과 가장 먼저 해보고 싶은 일은 무엇인가요?",
   "destination_name": "부산",
-  "current_address": "경상남도 창원시",
-  "latitude": 35.2275,
-  "longitude": 128.6819,
-  "audio": { "encoding": "pcm_s16le", "sample_rate_hz": 24000, "channels": 1, "frame_duration_ms": 20 }
+  "trip_id": "trip-id",
+  "current_address": "서울특별시",
+  "latitude": 37.5665,
+  "longitude": 126.978,
+  "audio": {
+    "encoding": "pcm_s16le",
+    "sample_rate_hz": 24000,
+    "channels": 1,
+    "frame_duration_ms": 20
+  }
 }
 ```
 
-주소 또는 좌표 변경 시 아래 이벤트가 PCM과 같은 WebSocket 순서로 전달된다. 서버는 이후 PCM을 새 주소와 좌표에 연결한다. `current_address: null`은 주소명 확인 불가이며 좌표가 없거나 범위를 벗어나면 `latitude`, `longitude`를 모두 `null`로 보내 이전 위치를 지운다. 주소와 좌표의 가용성은 각각 판단한다.
+서버 준비 응답:
 
 ```json
-{ "type": "location.changed", "trip_id": "selected-trip-id", "current_address": "부산광역시 강서구", "latitude": 35.2122, "longitude": 128.9806 }
+{ "type": "session.ready", "session_id": "voice-session-id" }
 ```
 
-## 결산 화면 연결
+이후 Android는 24kHz·모노·16비트 little-endian PCM을 바이너리로 전송한다.
 
-주차 화면의 여행 종료는 위 `POST trips/{tripId}/finish`의 HTTP 성공 확인 후에만 같은 ID로 결산을 연다. 정상 종료 응답은 `204`다. 결산 확인은 홈으로 이동한다. 이야기 지도에서 과거 여행을 열 때는 종료 요청을 다시 보내지 않고 결산을 조회하며, 뒤로가기는 지도 상태를 유지한 채 돌아가고 확인은 홈으로 이동한다. 호출 규약은 [TRIP_SUMMARY_INTEGRATION.md](TRIP_SUMMARY_INTEGRATION.md)를 따른다.
+### 위치 변경
 
-## 음성 전달·침묵 인식·질문 반환
+```json
+{
+  "type": "location.changed",
+  "trip_id": "trip-id",
+  "current_address": "충청남도 천안시",
+  "latitude": 36.8151,
+  "longitude": 127.1139
+}
+```
 
-Android의 전송·수신 처리는 구현되어 있다. 아래의 WSS 서버와 음성 인식(STT)·발화 감지(VAD)·질문 생성·음성 합성(TTS), 이야기 저장 처리는 서버 담당자의 구현 범위다.
+### 30초 무음
 
-1. 앱은 `session.start`로 선택한 여행·주제·질문·목적지·현재 위치를 보낸다. 서버의 `session.ready`를 받은 뒤 마이크 PCM을 WebSocket 바이너리로 보낸다. 오디오는 24kHz·모노·16비트 little-endian 원시 PCM이며, 기본 전송 단위는 480샘플(20ms, 960바이트)이다. WAV 헤더나 압축은 사용하지 않는다.
-2. PCM은 발화 중과 침묵 중 모두 전달한다. 앱의 음량 계산은 파형 표시용이다. 서버가 소음과 사람 발화를 구분해 `input.speech_started`와 `input.speech_stopped`를 보내야 한다. 앱은 발화 시작 시 침묵 타이머를 취소하고 발화 종료 후 30초를 다시 센다.
-3. 연결·마이크 입력이 활성이고 발화·응답 대기·음성 재생 중이 아닐 때만 침묵 타이머가 동작한다. 30초가 지나면 앱이 `{"type":"response.create","reason":"silence","silence_ms":30000}`를 보낸다. 응답 시작 확인 전까지 입력은 계속 전달하며, 그 사이 다시 발화하면 대기 중인 후속 질문을 취소한다. 서버도 이미 수락한 생성 작업과 취소된 출력을 폐기해야 한다.
-4. 서버는 응답마다 `response.started {response_id}` → `response.text {response_id,text}` 및 바이너리 PCM → `response.done {response_id}`를 보낸다. 텍스트는 화면 질문을 갱신하고, PCM은 앱의 `AudioTrack`으로 재생한다. `response.started`부터 마이크를 멈추고 스피커 재생이 실제로 끝난 뒤 다시 녹음한다. 음성 합성은 서버의 책임이다.
-5. 만들어진 이야기의 제목·지역·좌표는 음성 서버가 이야기 등록 REST API에 넣는다. 주차 화면은 같은 여행 ID의 전체 이야기를 최신 등록순으로 조회하고, 저장 시 전체 선택 ID를 전송한다.
+```json
+{ "type": "response.create", "reason": "silence", "silence_ms": 30000 }
+```
 
-업로드 큐는 약 1초 분량(48,000바이트), 스피커 재생 큐는 약 2초 분량으로 제한한다. 최초 연결 확인은 15초, 응답 대기·재생 데이터 지연은 30초에 실패 처리한다. 통화·차량 안전 경고·백그라운드 전환·오디오 포커스 상실도 입력과 재생을 중단시킨다.
+서버 응답 순서:
 
-`dorolog.voiceUrl`이 비어 있으면 마이크 입력과 파형만 확인한다. 서버 전송·침묵 후 질문 생성·서버 질문 재생은 수행하지 않는다. 첫 추천 질문은 현재 기본 샘플을 사용하며, 실시간 서버 질문은 위의 `response.text` 경로로 받는다.
+```json
+{ "type": "response.started", "response_id": "response-id" }
+{ "type": "response.text", "response_id": "response-id", "text": "가족과 다시 해보고 싶은 일이 있나요?" }
+```
 
+서버에서 합성한 질문 PCM 바이너리가 있으면 이어서 전송하고, 마지막에 다음 메시지가 온다.
 
-## 서버 담당자에게 필요한 구조와 규칙
+```json
+{ "type": "response.done", "response_id": "response-id" }
+```
 
-- **REST:** Android가 호출하는 여행 이야기 조회, 저장 대상 전체 교체, 여행 종료 확정, 결산 조회와 완료 여행 목록을 제공한다. 최신 최초 등록 시각을 기준으로 내림차순 정렬하고, 제목을 수정해도 순서를 바꾸지 않는다. 저장 대상 검증과 전체 교체는 원자적으로 처리하며 실패 시 일부만 반영하지 않는다.
-- **WSS 입력:** `session.start`의 여행·위치 문맥을 연결에 연결하고, 이후 PCM을 STT와 VAD로 처리한다. `location.changed` 이후 PCM에는 새 위치를 적용한다. 음성 세션 ID는 여행 ID와 별개이며, 새 연결의 알 수 없는 위치는 과거 좌표로 채우지 않는다.
-- **질문 생성:** 발화·대화 문맥을 관리하고, 후속 질문 요청 시 질문 텍스트와 합성 PCM을 만든다. 연결당 활성 응답은 하나이며, `response.cancel` 수신 시 대기 중이거나 생성 중인 후속 질문과 그 출력을 취소한다.
-- **응답 순서:** `session.ready`는 연결당 한 번 보낸다. 텍스트와 PCM보다 먼저 `response.started`를 보내고, 같은 `response_id`로 텍스트와 완료를 전송한다. 마지막 PCM을 전송한 뒤 `response.done`을 보내며 취소된 출력을 다시 보내지 않는다.
-- **메시지 제한:** 서버 제어 JSON은 16,384자 이하, 질문 텍스트는 4,000자 이하, 응답·세션 ID는 256자 이하로 보낸다. 바이너리 PCM은 메시지당 최대 24,000바이트이고 16비트 샘플 경계에 맞춘다. 합성 오디오는 실제 재생 속도에 가깝게 전송한다. 현재 앱에 정의되지 않은 새 이벤트를 보내면 연결이 실패하므로 이벤트 추가 시 앱과 함께 조율한다.
-- **이야기 저장:** 생성된 이야기의 안정적인 ID·제목·지역·좌표·저장 여부를 여행에 연결한다. 조회 응답의 `savedStoryIds`는 반드시 같은 응답의 이야기 ID만 포함해야 한다.
+### Android 질문 낭독
 
-인증 방식·REST/WSS 실제 주소·VAD 기준·STT/질문 생성/TTS 제공자는 서버 담당자와 최종 조율해야 한다. 현재 클라이언트에는 인증 헤더 연동이 없으므로 실제 서비스 공개 전에 여행 접근 권한과 인증 전송 방식을 함께 구현해야 한다. 첫 추천 주제 API, 여행 선택·생성·이어가기, 출발지·최종 목적지·시군 코드·여행 날짜 메타데이터의 공급 경로도 담당자와 별도로 연결한다. 이 문서의 서버 요구사항은 Android 호출 계약이며 다른 워크트리의 서버 구현을 가져오거나 특정 서버 구현을 완료했다는 뜻이 아니다.
+선택한 첫 질문은 서버 연결 전에 Pleos TextToSpeech SDK 3.3.1의 온디바이스 모드로 한국어 낭독한다. 완료한 첫 질문은 같은 여행을 일시 정지 후 재개할 때 반복하지 않는다. 서버 주소가 없어도 첫 질문 낭독 후 마이크 입력을 확인할 수 있다.
+
+후속 응답에 PCM이 없으면 `response.done`에서 마지막 `response.text` 전체 질문을 Pleos TTS로 한 번 읽는다. 여러 텍스트 이벤트는 델타가 아닌 최신 전체 질문을 전달한다. PCM이 있으면 기존 `AudioTrack` 재생을 사용해 중복 낭독하지 않는다. `response.started`부터 마이크를 멈추고 실제 재생이 끝난 뒤 녹음과 30초 침묵 타이머를 재개한다.
+
+통화·차량 안전 경고·백그라운드 전환·오디오 포커스 상실은 녹음과 TTS를 함께 중단한다. TTS 초기화·재생 실패나 응답 지연은 오류를 표시하고 일시 정지한다.
+
+발화 감지 메시지:
+
+```json
+{ "type": "input.speech_started" }
+{ "type": "input.speech_stopped" }
+```
+
+후속 질문을 취소할 때:
+
+```json
+{ "type": "response.cancel" }
+```
+
+## 6. 정차 중 이야기 조회
+
+```http
+GET /api/trips/{tripId}/stories
+```
+
+30초 전에 정차했다면 서버가 남은 대화를 먼저 정리하므로 응답까지 몇 초 걸릴 수 있다.
+
+```json
+{
+  "stories": [
+    {
+      "id": "story-id",
+      "title": "광안리에서 타고 싶은 자전거",
+      "region": "천안",
+      "latitude": 36.8151,
+      "longitude": 127.1139,
+      "summary": "가족이 광안리에서 함께 자전거를 타고 싶다고 이야기했다.",
+      "highlights": ["다 같이 자전거 타고 싶어"],
+      "recordedAt": "2026-11-14T14:30:00+09:00"
+    }
+  ],
+  "savedStoryIds": ["story-id"]
+}
+```
+
+처음 생성된 이야기는 모두 `savedStoryIds`에 포함된다. Android는 전체 선택 상태로 보여주고 사용자가 뺀 결과를 다음 API로 보낸다.
+
+## 7. 남길 이야기 저장
+
+```http
+PUT /api/trips/{tripId}/saved-stories
+```
+
+선택한 이야기 ID의 전체 목록을 보낸다. 빈 배열은 모두 빼기를 뜻한다.
+
+```json
+{ "storyIds": ["story-1", "story-3"] }
+```
+
+성공 응답은 `204 No Content`다.
+
+## 8. 여행 종료
+
+```http
+POST /api/trips/{tripId}/finish
+```
+
+요청 본문은 없다. 남은 대화를 저장하고 기록을 종료한 뒤 `stories`, `savedStoryIds`를 반환한다. 휴게소 정차나 일시정지에는 호출하지 않는다.
+
+## 9. 여행·이야기 상세
+
+```http
+GET /api/trips/{tripId}
+```
+
+여행 기본 정보에 `stories`, `savedStoryIds`가 추가된 응답을 반환한다. 최종 리포트와 보관함의 여행 상세 화면에서 사용한다.
+
+## 10. 전국 이야기 지도
+
+```http
+GET /api/stories/map
+```
+
+사용자가 남기기로 확정한 이야기만 반환한다.
+
+```json
+{
+  "storyCount": 3,
+  "tripCount": 2,
+  "regions": [
+    {
+      "region": "서울",
+      "storyCount": 2,
+      "latitude": 37.5665,
+      "longitude": 126.978
+    }
+  ],
+  "stories": [
+    {
+      "id": "story-id",
+      "tripId": "trip-id",
+      "title": "서울에서 나눈 가족 이야기",
+      "region": "서울",
+      "latitude": 37.5665,
+      "longitude": 126.978,
+      "summary": "가족이 서울에서 함께했던 일을 이야기했다.",
+      "highlights": ["그때 정말 재미있었어"],
+      "recordedAt": "2026-11-14T14:30:00+09:00"
+    }
+  ]
+}
+```
+
+- `storyCount`: 저장 확정된 전체 이야기 수
+- `tripCount`: 저장 이야기가 하나 이상 있는 여행 수
+- `regions`: 같은 지역명의 이야기 개수와 좌표 평균
+- 좌표가 없는 지역은 `latitude`, `longitude`가 `null`이다.
+
+## 오류 처리
+
+| 상태 코드 | 의미 |
+| --- | --- |
+| `404` | 여행 또는 기록을 찾을 수 없음 |
+| `409` | 종료된 기록에 발화를 추가하는 등 현재 상태와 요청이 충돌함 |
+| `422` | 필수 필드, 좌표 범위 또는 위도·경도 쌍이 올바르지 않음 |
+| `500` | GPT, DB 또는 서버 내부 처리 실패 |
+
+서버 실행 후 `http://127.0.0.1:8000/docs`에서도 REST 요청과 응답 형식을 확인할 수 있다.
