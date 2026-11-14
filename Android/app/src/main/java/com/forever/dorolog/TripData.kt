@@ -3,6 +3,8 @@ package com.forever.dorolog
 import com.google.gson.annotations.SerializedName
 import java.io.IOException
 import java.net.URI
+import java.util.concurrent.TimeUnit
+import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
@@ -53,7 +55,7 @@ interface TripApi {
     )
 
     @POST("trips/{tripId}/finish")
-    suspend fun finishTrip(@Path("tripId") tripId: String)
+    suspend fun finishTrip(@Path("tripId") tripId: String): ParkedStoriesResponseDto
 }
 
 class TripRepository(
@@ -88,13 +90,14 @@ class TripRepository(
             require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null &&
                 uri.query == null && uri.fragment == null && baseUrl.endsWith('/'))
             val api = Retrofit.Builder().baseUrl(baseUrl)
+                .client(OkHttpClient.Builder().readTimeout(60, TimeUnit.SECONDS).build())
                 .addConverterFactory(GsonConverterFactory.create()).build().create(TripApi::class.java)
             return TripRepository(
                 loadStories = { trip -> api.stories(trip).toModel() },
                 saveStories = { trip, ids ->
                     api.saveStories(trip, SaveParkedStoriesRequestDto(ids.sorted()))
                 },
-                finishTrip = api::finishTrip,
+                finishTrip = { trip -> api.finishTrip(trip).toModel(); Unit },
             )
         }
     }

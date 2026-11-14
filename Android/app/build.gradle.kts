@@ -33,8 +33,8 @@ android {
         val apiBaseUrl = providers.gradleProperty("dorolog.apiBaseUrl").orElse("").get()
         require(apiBaseUrl.isEmpty() || URI(apiBaseUrl).let {
             it.scheme == "https" && !it.host.isNullOrBlank() && it.userInfo == null &&
-                it.query == null && it.fragment == null && apiBaseUrl.endsWith('/')
-        }) { "dorolog.apiBaseUrl must be an HTTPS base URL ending with /" }
+                it.query == null && it.fragment == null && apiBaseUrl.endsWith("/api/")
+        }) { "dorolog.apiBaseUrl must be an HTTPS base URL ending with /api/" }
         buildConfigField("String", "TRIP_API_BASE_URL", "\"${apiBaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         val kakaoMapKey = providers.gradleProperty("dorolog.kakaoMapNativeAppKey")
             .orElse(dorologLocalProperties.getProperty("dorolog.kakaoMapNativeAppKey", "")).get()

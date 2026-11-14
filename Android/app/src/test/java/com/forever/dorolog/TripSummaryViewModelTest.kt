@@ -118,7 +118,7 @@ class TripSummaryViewModelTest {
     }
 
     private fun response(vararg ids: String) = TripSummaryResponseDto(
-        tripId = "trip-1", stories = ids.map { TripSummaryStoryDto(it, "이야기 $it", "서울") },
+        id = "trip-1", stories = ids.map { TripSummaryStoryDto(it, "이야기 $it", "서울") },
         savedStoryIds = ids.toList(),
     )
 }

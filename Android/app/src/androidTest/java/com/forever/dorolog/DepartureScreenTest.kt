@@ -34,7 +34,11 @@ class DepartureScreenTest {
 
     @Test fun recommendationsSwipe_andArrowsChangeSelection_withoutMapOrStartButton() {
         lateinit var vm: DepartureViewModel
-        compose.runOnUiThread { vm = DepartureViewModel(tripId = "selected-trip") }
+        compose.runOnUiThread {
+            vm = DepartureViewModel(tripId = "selected-trip")
+            vm.setActive(true)
+            vm.onNavigationChanged(null, true)
+        }
         compose.setContent {
             val state by vm.uiState.collectAsStateWithLifecycle()
             DepartureScreen(state, {}, vm::selectTopic, { vm.moveTopic(-1) }, { vm.moveTopic(1) }, vm::retry)
@@ -135,6 +139,7 @@ class DepartureScreenTest {
         compose.waitForIdle()
         compose.mainClock.autoAdvance = false
         compose.runOnUiThread {
+            vm.onNavigationChanged(null, true)
             vm.onSpeedChanged(1f)
             assertEquals(5, vm.uiState.value.countdownSeconds)
             owner.lifecycle.currentState = Lifecycle.State.CREATED
@@ -153,7 +158,7 @@ class DepartureScreenTest {
         compose.waitForIdle()
         compose.waitUntil(timeoutMillis = 15_000) {
             // Vehicle speed keeps arriving after a temporary Activity pause/resume on the emulator.
-            compose.runOnUiThread { vm.onSpeedChanged(1f) }
+            compose.runOnUiThread { vm.onNavigationChanged(null, true); vm.onSpeedChanged(1f) }
             vm.uiState.value.phase != DepartureViewModel.Phase.Ready
         }
     }

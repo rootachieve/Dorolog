@@ -28,7 +28,7 @@
     <string name="archive_home">메인 화면으로</string>
     <string name="archive_trips">여행별</string>
     <string name="archive_map">지도</string>
-    <string name="archive_all">전체 여행</string>
+    <string name="archive_all">전체 이야기</string>
     <string name="archive_choose_region">지역 선택</string>
     <string name="archive_sample">미리보기 데이터 · 서버 미연결</string>
     <string name="archive_loading">여행을 불러오고 있어요</string>

@@ -94,9 +94,10 @@ internal fun ArchiveKakaoMap(
         MapNotice("카카오맵 키 설정 후 지도가 표시됩니다", modifier)
         return
     }
+    val locatedRegions = regions.filter { it.latitude != null && it.longitude != null }
     val density = LocalDensity.current.density
-    val markerStyles = remember(regions, density) {
-        regions.associate { region ->
+    val markerStyles = remember(locatedRegions, density) {
+        locatedRegions.associate { region ->
             region.id to listOf(false, true).map { selected ->
                 LabelStyle.from(regionMarker(region, selected, density))
                     .setApplyDpScale(false).setAnchorPoint(0.5f, 0.36f)
@@ -124,26 +125,26 @@ internal fun ArchiveKakaoMap(
                 modifier = Modifier.fillMaxSize(),
             )
         }
-        LaunchedEffect(map, regions, selectedRegionId) {
+        LaunchedEffect(map, locatedRegions, selectedRegionId) {
             val readyMap = map ?: return@LaunchedEffect
             val layer = readyMap.labelManager?.addLayer(
                 LabelLayerOptions.from("archive-regions")
                     .setCompetitionType(CompetitionType.None).setClickable(true),
             ) ?: return@LaunchedEffect
             layer.removeAll()
-            regions.forEach { region ->
+            locatedRegions.forEach { region ->
                 val style = markerStyles.getValue(region.id)[if (region.id == selectedRegionId) 1 else 0]
                 layer.addLabel(
-                    LabelOptions.from(region.id, LatLng.from(region.latitude, region.longitude))
+                    LabelOptions.from(region.id, LatLng.from(requireNotNull(region.latitude), requireNotNull(region.longitude)))
                         .setStyles(style)
                         .setClickable(true).setTag(region.id),
                 )
             }
         }
-        LaunchedEffect(map, regions) {
-            if (regions.isNotEmpty()) {
+        LaunchedEffect(map, locatedRegions) {
+            if (locatedRegions.isNotEmpty()) {
                 map?.moveCamera(CameraUpdateFactory.fitMapPoints(
-                    regions.map { LatLng.from(it.latitude, it.longitude) }.toTypedArray(),
+                    locatedRegions.map { LatLng.from(requireNotNull(it.latitude), requireNotNull(it.longitude)) }.toTypedArray(),
                     (60 * density).roundToInt(), 10,
                 ))
             }
@@ -161,7 +162,11 @@ internal fun ArchiveKakaoMap(
 }
 
 @Composable
-internal fun ArchiveDestinationMap(latitude: Double, longitude: Double, modifier: Modifier = Modifier) {
+internal fun ArchiveDestinationMap(latitude: Double?, longitude: Double?, modifier: Modifier = Modifier) {
+    if (latitude == null || longitude == null) {
+        MapNotice("목적지 위치 정보 없음", modifier, compact = true)
+        return
+    }
     if (BuildConfig.KAKAO_MAP_NATIVE_APP_KEY.isBlank() || LocalInspectionMode.current) {
         MapNotice("카카오맵 키 설정 필요", modifier, compact = true)
         return
@@ -358,7 +363,7 @@ private fun regionMarker(region: ArchiveRegion, selected: Boolean, density: Floa
     paint.style = Paint.Style.FILL
     paint.textSize = 23 * density
     paint.color = if (selected) android.graphics.Color.WHITE else 0xFF4F6FE4.toInt()
-    canvas.drawText(region.tripCount.toString(), centerX, centerY - (paint.ascent() + paint.descent()) / 2, paint)
+    canvas.drawText(region.storyCount.toString(), centerX, centerY - (paint.ascent() + paint.descent()) / 2, paint)
     paint.color = 0xFF333333.toInt()
     paint.textSize = 16 * density
     canvas.drawText(region.name, centerX, 80 * density, paint)

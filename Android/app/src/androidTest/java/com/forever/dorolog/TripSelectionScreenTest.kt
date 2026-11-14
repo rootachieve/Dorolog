@@ -57,6 +57,20 @@ class TripSelectionScreenTest {
         compose.onNodeWithTag("trip-selection-list").assertDoesNotExist()
     }
 
+    @Test fun uncertainCreationOffersListRefresh_andDisablesAnotherCreate() {
+        var refreshes = 0
+        compose.setContent {
+            TripSelectionScreen(TripSelectionViewModel.UiState(loading = false, startError = "생성 결과 확인 필요",
+                canStartNewTrip = false, canRetryStart = false),
+                onBack = {}, onNewTrip = {}, onResumeTrip = {}, onRetry = { refreshes++ },
+                onRetryStart = { error("must refresh instead of repeating create") },
+                onDismissDialog = {}, onStartWithoutDestination = {})
+        }
+        compose.onNodeWithText("새로 시작").assertIsNotEnabled()
+        compose.onNodeWithText("다시 불러오기").performClick()
+        compose.runOnIdle { assertEquals(1, refreshes) }
+    }
+
     @Test fun shortWindowAndLargeText_canScrollToAnExistingTrip() {
         compose.setContent {
             CompositionLocalProvider(LocalDensity provides Density(1f, 2f)) {
@@ -72,5 +86,5 @@ class TripSelectionScreenTest {
 
     private val trips = (0..11).map { index -> OngoingTrip("trip-$index",
         TripPlace("서울", "서울시", 37.56, 126.98), TripPlace("부산 $index", "부산시", 35.16, 129.16),
-        Instant.parse("2026-11-13T00:00:00Z"), index) }
+        Instant.parse("2026-11-13T00:00:00Z"), index, "active") }
 }

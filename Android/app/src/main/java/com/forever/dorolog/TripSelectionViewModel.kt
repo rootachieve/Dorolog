@@ -2,8 +2,6 @@ package com.forever.dorolog
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import java.time.Instant
-import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -12,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import retrofit2.HttpException
 
 class TripSelectionViewModel(private val repository: TripSelectionRepository = TripSelectionRepository()) : ViewModel() {
     data class UiState(
@@ -23,6 +22,8 @@ class TripSelectionViewModel(private val repository: TripSelectionRepository = T
         val showDestinationDialog: Boolean = false,
         val startedTripId: String? = null,
         val startedDestination: Destination? = null,
+        val canStartNewTrip: Boolean = true,
+        val canRetryStart: Boolean = true,
     )
     private val _uiState = MutableStateFlow(UiState())
     val uiState = _uiState.asStateFlow()
@@ -30,12 +31,8 @@ class TripSelectionViewModel(private val repository: TripSelectionRepository = T
     private var navigationAvailable: Boolean? = null
     private var destination: Destination? = null
     private var location = VehicleLocation()
-    private val createRequestId = UUID.randomUUID().toString()
-    private var draftId: String? = null
     private var pendingTripId: String? = null
     private var pendingNewTrip = false
-    // An unacknowledged start must survive switching cards to avoid duplicating a drive.
-    private val pendingRequests = mutableMapOf<String, StartTripRequestDto>()
     private var browsingAllowed = true
 
     init { retry() }
@@ -67,44 +64,44 @@ class TripSelectionViewModel(private val repository: TripSelectionRepository = T
         location = VehicleLocation()
     }
 
-    fun startNewTrip() = selectTrip(null)
+    fun startNewTrip() {
+        if (uiState.value.canStartNewTrip) selectTrip(null)
+    }
     fun resumeTrip(id: String) {
-        if (uiState.value.trips.none { it.id == id }) return
-        selectTrip(id)
+        if (uiState.value.trips.any { it.id == id }) selectTrip(id)
     }
     private fun selectTrip(id: String?) {
         if (!browsingAllowed || uiState.value.starting || uiState.value.startedTripId != null) return
         pendingNewTrip = id == null
-        pendingTripId = id ?: draftId
+        pendingTripId = id
+        _uiState.update { it.copy(canRetryStart = true) }
         prepareStart()
     }
 
     fun retryStart() {
-        if (!browsingAllowed || uiState.value.starting || uiState.value.startedTripId != null) return
-        prepareStart()
+        if (!browsingAllowed || uiState.value.starting || uiState.value.startedTripId != null || !uiState.value.canRetryStart) return
+        if (pendingTripId != null || pendingNewTrip) prepareStart()
     }
 
     private fun prepareStart() {
         _uiState.update { it.copy(starting = true, startError = null, showDestinationDialog = false) }
         viewModelScope.launch {
             try {
-                if (pendingTripId == null && pendingNewTrip) {
-                    val id = repository.create(createRequestId)
+                val id = pendingTripId
+                if (id != null) {
+                    check(browsingAllowed) { "안전한 곳에 정차한 후 여행을 시작해 주세요" }
+                    val selected = uiState.value.trips.first { it.id == id }
+                    val trip = if (selected.status == "finished") repository.resume(id) else selected
                     ensureActive()
-                    draftId = id
-                    pendingTripId = id
-                }
-                requireNotNull(pendingTripId)
-                if (pendingRequests.containsKey(pendingTripId)) submit()
-                else {
+                    tripStarted(trip)
+                } else {
                     check(navigationAvailable == true) { "내비게이션 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요" }
                     if (destination == null) _uiState.update { it.copy(showDestinationDialog = true) }
-                    else submit()
+                    else submitNew(destination)
                 }
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (error: Exception) {
-                _uiState.update { it.copy(startError = if (error is IllegalStateException) error.message
-                    else "여행을 시작하지 못했어요. 다시 시도해 주세요") }
+                showStartError(error)
             } finally { _uiState.update { it.copy(starting = false) } }
         }
     }
@@ -113,48 +110,49 @@ class TripSelectionViewModel(private val repository: TripSelectionRepository = T
         if (!uiState.value.starting) _uiState.update { it.copy(showDestinationDialog = false, startError = null) }
     }
     fun confirmWithoutDestination() {
-        if (!browsingAllowed || !uiState.value.showDestinationDialog || uiState.value.starting) return
+        if (!browsingAllowed || !uiState.value.showDestinationDialog || uiState.value.starting || !uiState.value.canStartNewTrip) return
         _uiState.update { it.copy(starting = true, startError = null) }
         viewModelScope.launch {
             try {
                 check(navigationAvailable == true) { "내비게이션 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요" }
-                submit(requestedDestination = null)
+                submitNew(null)
                 _uiState.update { it.copy(showDestinationDialog = false) }
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (error: Exception) {
-                _uiState.update { it.copy(startError = if (error is IllegalStateException) error.message
-                    else "여행을 시작하지 못했어요. 다시 시도해 주세요") }
+                showStartError(error)
             } finally { _uiState.update { it.copy(starting = false) } }
         }
     }
 
-    private suspend fun submit(requestedDestination: Destination? = destination) {
+    private suspend fun submitNew(requestedDestination: Destination?) {
         check(browsingAllowed) { "안전한 곳에 정차한 후 여행을 시작해 주세요" }
-        val tripId = checkNotNull(pendingTripId)
-        val request = pendingRequests[tripId] ?: run {
-            val latitude = location.latitude
-            val longitude = location.longitude
-            check(latitude != null && longitude != null && latitude.isFinite() && longitude.isFinite() &&
-                latitude in -90.0..90.0 && longitude in -180.0..180.0) {
-                "현재 위치를 확인하지 못했어요. 잠시 후 다시 시도해 주세요"
-            }
-            val point = requestedDestination?.let {
-                val lat = it.latitude
-                val lon = it.longitude
-                check(lat != null && lon != null && lat.isFinite() && lon.isFinite() &&
-                    lat in -90.0..90.0 && lon in -180.0..180.0) {
-                    "목적지 위치를 확인하지 못했어요. 내비게이션을 확인해 주세요"
-                }
-                TripPlaceDto(it.name, it.address.orEmpty(), lat, lon)
-            }
-            StartTripRequestDto(UUID.randomUUID().toString(),
-                TripPlaceDto(location.address.orEmpty(), location.address.orEmpty(), latitude, longitude),
-                point, Instant.now().toString()).also { pendingRequests[tripId] = it }
+        check(!location.address.isNullOrBlank() || location.latitude != null && location.longitude != null) {
+            "현재 위치를 확인하지 못했어요. 잠시 후 다시 시도해 주세요"
         }
-        val id = repository.start(tripId, request)
+        val request = CreateTripRequestDto(location.address?.trim()?.takeIf { it.isNotEmpty() } ?: "위치 정보 없음",
+            location.latitude, location.longitude, requestedDestination?.name,
+            requestedDestination?.latitude, requestedDestination?.longitude, requestedDestination?.address)
+        // A lost create response may already have created a trip; recover through the recent list.
+        _uiState.update { it.copy(canStartNewTrip = false, canRetryStart = false) }
+        val trip = try {
+            repository.create(request)
+        } catch (error: HttpException) {
+            if (error.code() == 422) _uiState.update { it.copy(canStartNewTrip = true, canRetryStart = true) }
+            throw error
+        }
         currentCoroutineContext().ensureActive()
-        _uiState.update { it.copy(startedTripId = id, startedDestination = request.destination?.let { place ->
-            Destination(place.name.orEmpty(), place.latitude, place.longitude, place.address)
+        tripStarted(trip)
+    }
+
+    private fun tripStarted(trip: OngoingTrip) {
+        _uiState.update { it.copy(startedTripId = trip.id, startedDestination = trip.lastDestination?.let { place ->
+            Destination(place.name, place.latitude, place.longitude, place.address)
         }) }
+    }
+
+    private fun showStartError(error: Exception) {
+        _uiState.update { it.copy(showDestinationDialog = it.showDestinationDialog && it.canRetryStart,
+            startError = if (!it.canRetryStart) "여행 생성 결과를 확인하지 못했어요. 최근 목록을 새로 불러와 이어가기를 선택해 주세요"
+            else if (error is IllegalStateException) error.message else "여행을 시작하지 못했어요. 다시 시도해 주세요") }
     }
 }

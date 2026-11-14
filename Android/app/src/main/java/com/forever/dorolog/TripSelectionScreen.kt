@@ -151,9 +151,9 @@ internal fun TripSelectionScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(uiState.startError, Modifier.weight(1f), fontFamily = SelectionFont,
                         fontSize = 18.sp, color = ForeverColors.selectionBody)
-                    TextButton(onClick = onRetryStart, enabled = !uiState.starting,
+                    TextButton(onClick = if (uiState.canRetryStart) onRetryStart else onRetry, enabled = !uiState.starting,
                         modifier = Modifier.heightIn(min = 64.dp)) {
-                        Text("다시 시도", fontFamily = SelectionFont, fontSize = 18.sp,
+                        Text(if (uiState.canRetryStart) "다시 시도" else "다시 불러오기", fontFamily = SelectionFont, fontSize = 18.sp,
                             color = ForeverColors.selectionAccent)
                     }
                 }
@@ -187,7 +187,7 @@ internal fun TripSelectionScreen(
                     val cardHeight = ((maxWidth - newCardWidth - 52.dp) / 3 / 1.33f).coerceAtLeast(180.dp)
                     val panelHeight = (cardHeight * 2 + 16.dp).coerceAtMost(maxHeight)
                     Row(Modifier.fillMaxWidth().height(panelHeight), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                        NewTripCard(onNewTrip, !uiState.starting, false, Modifier.width(newCardWidth).fillMaxHeight(), scale)
+                        NewTripCard(onNewTrip, !uiState.starting && uiState.canStartNewTrip, false, Modifier.width(newCardWidth).fillMaxHeight(), scale)
                         SelectionTrips(uiState, onResumeTrip, onRetry, columns, Modifier.weight(1f).fillMaxHeight(), scale)
                     }
                 }
@@ -196,7 +196,7 @@ internal fun TripSelectionScreen(
                     header = {
                         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             heading()
-                            NewTripCard(onNewTrip, !uiState.starting, true, Modifier.fillMaxWidth().heightIn(min = 96.dp))
+                            NewTripCard(onNewTrip, !uiState.starting && uiState.canStartNewTrip, true, Modifier.fillMaxWidth().heightIn(min = 96.dp))
                             startStatus()
                         }
                     })
@@ -303,7 +303,9 @@ private fun SelectionTripCard(trip: OngoingTrip, latest: Boolean, enabled: Boole
         .clip(RoundedCornerShape(24.dp)).background(ForeverColors.selectionMapPlaceholder)
         .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
         .semantics { selected = latest }.testTag("resume-${trip.id}")) {
-        ArchiveDestinationMap(place.latitude, place.longitude, Modifier.fillMaxSize())
+        val latitude = place.latitude
+        val longitude = place.longitude
+        if (latitude != null && longitude != null) ArchiveDestinationMap(latitude, longitude, Modifier.fillMaxSize())
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
             0.3f to ForeverColors.selectionTransparent, 1f to ForeverColors.selectionMapShade)))
         Surface(Modifier.align(Alignment.TopEnd).padding(12.dp).heightIn(min = 48.dp),
