@@ -77,6 +77,7 @@ dependencies {
     implementation(libs.retrofit.gson)
     implementation(libs.pleos.navi)
     implementation(libs.pleos.vehicle)
+    implementation(libs.pleos.tts)
     implementation(libs.compose.audiowaveform)
     implementation(libs.okhttp)
     implementation(libs.kakao.maps)
