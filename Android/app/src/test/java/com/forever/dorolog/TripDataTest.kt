@@ -12,6 +12,7 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.Buffer
 import org.junit.Assert.*
 import org.junit.Test
+import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
@@ -62,14 +63,15 @@ class TripDataTest {
         assertEquals(listOf(setOf("one", "two"), setOf("two", "three"), emptySet<String>()), sent)
     }
 
-    @Test fun retrofitContractScopesStoriesToTrip_andPutsReplacementIds() = runTest {
+    @Test fun retrofitContractScopesStoriesToTrip_savesIds_andFinishesWithBodylessPost() = runTest {
         val requests = mutableListOf<Pair<Request, String>>()
+        var finishStatus = 204
         val client = OkHttpClient.Builder().addInterceptor { chain ->
             val request = chain.request()
             val body = Buffer().also { request.body?.writeTo(it) }.readUtf8()
             requests += request to body
             Response.Builder().request(request).protocol(Protocol.HTTP_1_1).message("OK")
-                .code(if (request.method == "GET") 200 else 204)
+                .code(if (request.method == "GET") 200 else if (request.method == "POST") finishStatus else 204)
                 .body((if (request.method == "GET") """{"stories":[],"savedStoryIds":[]}""" else "")
                     .toResponseBody("application/json".toMediaType())).build()
         }.build()
@@ -78,11 +80,40 @@ class TripDataTest {
         assertEquals(TripStories(emptyList(), emptySet()), api.stories("trip").toModel())
         api.saveStories("trip", SaveParkedStoriesRequestDto(listOf("one", "three")))
         api.saveStories("trip", SaveParkedStoriesRequestDto(emptyList()))
+        api.finishTrip("trip")
         assertEquals("/v1/trips/trip/stories", requests[0].first.url.encodedPath)
         assertEquals("PUT", requests[1].first.method)
         assertEquals("/v1/trips/trip/saved-stories", requests[1].first.url.encodedPath)
         assertEquals("""{"storyIds":["one","three"]}""", requests[1].second)
         assertEquals("""{"storyIds":[]}""", requests[2].second)
+        assertEquals("POST", requests[3].first.method)
+        assertEquals("/v1/trips/trip/finish", requests[3].first.url.encodedPath)
+        assertEquals("", requests[3].second)
+        finishStatus = 503
+        try {
+            api.finishTrip("trip")
+            fail("Unsuccessful finish must fail")
+        } catch (error: HttpException) { assertEquals(503, error.code()) }
+    }
+
+    @Test fun finishRequiresTripId_andPropagatesBackendFailures() = runTest {
+        val requested = mutableListOf<String>()
+        val failure = IOException("offline")
+        val repository = TripRepository(finishTrip = { trip -> requested += trip; throw failure })
+        try {
+            repository.finish(" ")
+            fail("Blank trip must fail")
+        } catch (_: IllegalArgumentException) { }
+        assertTrue(requested.isEmpty())
+        try {
+            repository.finish("chosen-trip")
+            fail("Backend failure must propagate")
+        } catch (error: IOException) { assertSame(failure, error) }
+        assertEquals(listOf("chosen-trip"), requested)
+        try {
+            TripRepository().finish("chosen-trip")
+            fail("Missing backend must fail")
+        } catch (_: IOException) { }
     }
 
     @Test fun unconfiguredRepositoryCannotPretendToSave_andInsecureUrlsAreRejected() = runTest {

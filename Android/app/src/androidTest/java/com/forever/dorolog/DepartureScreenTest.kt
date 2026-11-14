@@ -21,6 +21,8 @@ import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import java.io.IOException
+import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -76,11 +78,16 @@ class DepartureScreenTest {
     @Test fun morphInterpolatesBackground_thenDrivingHidesBack_andPhysicalBackPauses() {
         lateinit var vm: DepartureViewModel
         lateinit var back: androidx.activity.OnBackPressedDispatcher
-        compose.runOnUiThread { vm = DepartureViewModel(tripId = "selected-trip") }
+        compose.runOnUiThread {
+            vm = DepartureViewModel(tripId = "selected-trip", tripRepository = TripRepository(finishTrip = {}))
+        }
         compose.mainClock.autoAdvance = false
         compose.setContent {
             back = checkNotNull(LocalOnBackPressedDispatcherOwner.current).onBackPressedDispatcher
-            DepartureRoute(tripId = "selected-trip", onBack = {}, viewModel = vm)
+            DepartureRoute(tripId = "selected-trip", onBack = {}, viewModel = vm,
+                summaryAnimationsEnabled = false, summaryRepository = TripSummaryRepository { trip ->
+                    TripSummaryResponseDto(trip, emptyList(), emptyList())
+                })
         }
         startDriving(vm)
         compose.mainClock.advanceTimeByFrame()
@@ -102,7 +109,7 @@ class DepartureScreenTest {
         compose.onNodeWithTag("finish-conversation").assertIsDisplayed().performClick()
         compose.mainClock.advanceTimeBy(800)
         compose.onNodeWithTag("settlement-screen").assertIsDisplayed()
-        compose.onNodeWithText("여행 결산").assertIsDisplayed()
+        compose.onNodeWithText("이번 여행에서 저장한 이야기가 없어요.").assertIsDisplayed()
         compose.runOnUiThread { back.onBackPressed() }
     }
 
@@ -144,8 +151,11 @@ class DepartureScreenTest {
 
     private fun startDriving(vm: DepartureViewModel) {
         compose.waitForIdle()
-        compose.runOnUiThread { vm.onSpeedChanged(1f) }
-        compose.waitUntil(timeoutMillis = 7_000) { vm.uiState.value.phase != DepartureViewModel.Phase.Ready }
+        compose.waitUntil(timeoutMillis = 15_000) {
+            // Vehicle speed keeps arriving after a temporary Activity pause/resume on the emulator.
+            compose.runOnUiThread { vm.onSpeedChanged(1f) }
+            vm.uiState.value.phase != DepartureViewModel.Phase.Ready
+        }
     }
 
     @Test fun drivingControls_onlyOfferFinishWhilePaused_andBlockUnsafeResume() {
@@ -182,5 +192,71 @@ class DepartureScreenTest {
         compose.onNodeWithText("남길 이야기 고르기").assertIsDisplayed()
         compose.onNodeWithText("이야기 저장").assertIsDisplayed()
         compose.onNodeWithText("5개의 이야기를 저장했어요", substring = true).assertDoesNotExist()
+    }
+
+    @Test fun finishFailureRetriesSameTrip_andOnlyAcknowledgmentOpensRealSummary_thenConfirmationReturnsHome() {
+        val tripId = "chosen-trip"
+        val firstFinish = CompletableDeferred<Unit>()
+        val retryFinish = CompletableDeferred<Unit>()
+        val finishRequests = mutableListOf<String>()
+        val summaryRequests = mutableListOf<String>()
+        val completedTrips = mutableListOf<String>()
+        var home by androidx.compose.runtime.mutableStateOf(false)
+        lateinit var vm: DepartureViewModel
+        compose.runOnUiThread {
+            vm = DepartureViewModel(tripId, tripRepository = TripRepository(
+                loadStories = { TripStories(emptyList(), emptySet()) },
+                finishTrip = { requestedTrip ->
+                    finishRequests += requestedTrip
+                    if (finishRequests.size == 1) firstFinish.await() else retryFinish.await()
+                },
+            ))
+        }
+        val summaryRepository = TripSummaryRepository { requestedTrip ->
+            summaryRequests += requestedTrip
+            TripSummaryResponseDto(requestedTrip,
+                listOf(TripSummaryStoryDto("saved-story", "가족의 바다 이야기", "부산")), listOf("saved-story"))
+        }
+        compose.setContent {
+            if (!home) DepartureRoute(tripId, onBack = { home = true }, animationsEnabled = false,
+                summaryRepository = summaryRepository, onTripFinished = { completedTrips += it }, viewModel = vm)
+        }
+        compose.waitForIdle()
+        compose.runOnIdle { vm.onDestinationArrived(); vm.onParkedChanged(true) }
+        compose.onNodeWithTag("parked-screen").assertIsDisplayed()
+        compose.onNodeWithText("여행 종료하기").performSemanticsAction(SemanticsActions.OnClick) { it() }
+        compose.waitUntil { finishRequests.size == 1 }
+        compose.onNodeWithTag("trip-finishing-screen").assertIsDisplayed()
+        compose.onNodeWithTag("settlement-screen").assertDoesNotExist()
+        compose.runOnIdle {
+            assertTrue(summaryRequests.isEmpty())
+            assertTrue(completedTrips.isEmpty())
+            firstFinish.completeExceptionally(IOException("offline"))
+        }
+        compose.waitUntil { vm.uiState.value.finishError != null }
+        compose.onNodeWithText("여행 종료를 완료하지 못했어요. 다시 시도해 주세요").assertIsDisplayed()
+        compose.onNodeWithTag("settlement-screen").assertDoesNotExist()
+        compose.onNodeWithText("다시 시도").performSemanticsAction(SemanticsActions.OnClick) { it() }
+        compose.waitUntil { finishRequests.size == 2 }
+        compose.onNodeWithText("여행을 마무리하고 있어요").assertIsDisplayed()
+        compose.onNodeWithTag("settlement-screen").assertDoesNotExist()
+        compose.runOnIdle {
+            assertEquals(listOf(tripId, tripId), finishRequests)
+            assertTrue(summaryRequests.isEmpty())
+            assertTrue(completedTrips.isEmpty())
+            retryFinish.complete(Unit)
+        }
+        compose.waitUntil { summaryRequests.size == 1 }
+        compose.onNodeWithTag("settlement-screen").assertIsDisplayed()
+        compose.onNodeWithText("1개의 이야기를 저장했어요.", substring = true).assertIsDisplayed()
+        compose.onNodeWithContentDescription("1번 이야기, 부산, 가족의 바다 이야기").assertIsDisplayed()
+        compose.runOnIdle {
+            assertEquals(listOf(tripId), summaryRequests)
+            assertEquals(listOf(tripId), completedTrips)
+            assertFalse(home)
+        }
+        compose.onNodeWithText("확인").performSemanticsAction(SemanticsActions.OnClick) { it() }
+        compose.runOnIdle { assertTrue(home) }
+        compose.onNodeWithTag("settlement-screen").assertDoesNotExist()
     }
 }

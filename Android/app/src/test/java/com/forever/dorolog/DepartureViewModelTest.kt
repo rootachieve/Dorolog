@@ -17,6 +17,15 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DepartureViewModelTest {
+    @Test fun selectedTripAndInitialDestination_areUsedForFirstQuestionRequest() = runTest(dispatcher) {
+        val requests = mutableListOf<RecommendationRequestDto>()
+        val vm = DepartureViewModel("chosen/server id", DepartureRepository { requests += it; sampleDepartureResponse },
+            initialDestination = Destination("부산", 35.16, 129.16, "부산시"))
+        runCurrent()
+        assertEquals("chosen/server id", requests.single().tripId)
+        assertEquals("부산", requests.single().destinationName)
+        assertEquals("부산", vm.uiState.value.destination?.name)
+    }
     private val dispatcher = StandardTestDispatcher()
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }
     @After fun tearDown() { Dispatchers.resetMain() }

@@ -24,4 +24,16 @@
     <string name="arrival_message">목적지에 도착해 대화를 마쳤어요</string>
     <string name="arrival_without_server">대화 서버 연결 후 이야기 요약을 확인할 수 있어요</string>
     <string name="confirm">확인</string>
+    <string name="story_map">이야기 지도</string>
+    <string name="archive_home">메인 화면으로</string>
+    <string name="archive_trips">여행별</string>
+    <string name="archive_map">지도</string>
+    <string name="archive_all">전체 여행</string>
+    <string name="archive_choose_region">지역 선택</string>
+    <string name="archive_sample">미리보기 데이터 · 서버 미연결</string>
+    <string name="archive_loading">여행을 불러오고 있어요</string>
+    <string name="archive_empty">아직 함께한 여행이 없어요</string>
+    <string name="archive_story_count">함께한 이야기 %1$d</string>
+    <string name="archive_trip_count">함께한 여행 %1$d</string>
+    <string name="archive_parked_only">안전한 곳에 정차한 후\n이야기 지도를 확인해 주세요</string>
 </resources>

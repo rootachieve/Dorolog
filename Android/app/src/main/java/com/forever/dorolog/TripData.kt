@@ -7,6 +7,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
 
@@ -50,6 +51,9 @@ interface TripApi {
         @Path("tripId") tripId: String,
         @Body request: SaveParkedStoriesRequestDto,
     )
+
+    @POST("trips/{tripId}/finish")
+    suspend fun finishTrip(@Path("tripId") tripId: String)
 }
 
 class TripRepository(
@@ -58,6 +62,9 @@ class TripRepository(
     },
     private val saveStories: suspend (String, Set<String>) -> Unit = { _, _ ->
         throw IOException("이야기 서버 주소가 설정되지 않았어요")
+    },
+    private val finishTrip: suspend (String) -> Unit = {
+        throw IOException("여행 서버 주소가 설정되지 않았어요")
     },
 ) {
     suspend fun load(tripId: String): TripStories {
@@ -68,6 +75,11 @@ class TripRepository(
     suspend fun save(tripId: String, storyIds: Set<String>) {
         require(tripId.isNotBlank() && storyIds.all { it.isNotBlank() })
         saveStories(tripId, storyIds.toSet())
+    }
+
+    suspend fun finish(tripId: String) {
+        require(tripId.isNotBlank())
+        finishTrip(tripId)
     }
 
     companion object {
@@ -82,6 +94,7 @@ class TripRepository(
                 saveStories = { trip, ids ->
                     api.saveStories(trip, SaveParkedStoriesRequestDto(ids.sorted()))
                 },
+                finishTrip = api::finishTrip,
             )
         }
     }

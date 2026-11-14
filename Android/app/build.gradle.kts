@@ -1,8 +1,13 @@
 import java.net.URI
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
+}
+
+val dorologLocalProperties = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.isFile }?.inputStream()?.use { load(it) }
 }
 
 android {
@@ -31,6 +36,9 @@ android {
                 it.query == null && it.fragment == null && apiBaseUrl.endsWith('/')
         }) { "dorolog.apiBaseUrl must be an HTTPS base URL ending with /" }
         buildConfigField("String", "TRIP_API_BASE_URL", "\"${apiBaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        val kakaoMapKey = providers.gradleProperty("dorolog.kakaoMapNativeAppKey")
+            .orElse(dorologLocalProperties.getProperty("dorolog.kakaoMapNativeAppKey", "")).get()
+        buildConfigField("String", "KAKAO_MAP_NATIVE_APP_KEY", "\"${kakaoMapKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
 
     buildTypes {
@@ -71,6 +79,7 @@ dependencies {
     implementation(libs.pleos.vehicle)
     implementation(libs.compose.audiowaveform)
     implementation(libs.okhttp)
+    implementation(libs.kakao.maps)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     testImplementation(libs.junit)
