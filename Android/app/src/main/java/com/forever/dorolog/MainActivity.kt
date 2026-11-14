@@ -192,7 +192,7 @@ private fun ArchiveBrowser(
     if (trip == null) {
         stateHolder.SaveableStateProvider("archive") {
             ArchiveRoute(onBack = onHome, onTripClick = { id, destination -> selectedTrip = id to destination }, modifier = modifier,
-                browsingAllowed = browsingAllowed, viewModel = archiveViewModel)
+                browsingAllowed = browsingAllowed, viewModel = archiveViewModel, animationsEnabled = animationsEnabled)
         }
     } else {
         TripSummaryScreen(tripId = trip.first, destinationName = trip.second,
