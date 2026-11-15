@@ -58,6 +58,8 @@ http://127.0.0.1:8088/
 | Android SDK | compileSdk·targetSdk 36, minSdk 28 |
 | 서버 연결 | HTTPS REST API, WSS 음성 WebSocket |
 
+- AI 기능을 사용하려면 프로젝트 루트의 `.env` 파일에 `OPENAI_API_KEY={Your key}`를 설정해야 합니다.
+- Android는 `Android/local.properties` 파일 하단에 `dorolog.kakaoMapNativeAppKey={Your Kakao map key}`를 추가해야 합니다.
 - AI 기능과 이야기 저장을 사용하려면 인터넷 연결이 필요합니다.
 - 기본 배포 서버 주소는 APK에 포함되어 있어 별도의 서버 설정 없이 실행할 수 있습니다.
 - 내비게이션 목적지가 없어도 `목적지 없이 시작`을 선택해 사용할 수 있습니다.
