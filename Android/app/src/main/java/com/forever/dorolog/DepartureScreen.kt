@@ -11,7 +11,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.snap
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -35,7 +34,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
@@ -70,7 +68,6 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
-import com.linc.audiowaveform.AudioWaveform
 
 private val QuestionFont = FontFamily(Font(R.font.ownglyph_yuntaeng))
 private val DepartureFont = FontFamily(
@@ -458,21 +455,20 @@ private fun ConversationWave(scale: Float, progress: Float, modifier: Modifier) 
 
 @Composable
 private fun LiveConversationWave(amplitudes: List<Int>, scale: Float, modifier: Modifier) {
-    val density = LocalDensity.current.density
-    val color = Color(0xFF7E7BFF)
-    val peak = (amplitudes.maxOrNull() ?: 0).coerceIn(0, 100) / 100f
-    val heightGain = 1f + 4f * peak * peak
-    val spikes = remember(amplitudes, density) {
-        amplitudes.map { (it.coerceIn(0, 100) / 100f * 48f * density).toInt() }
-    }
-    Box(modifier, contentAlignment = Alignment.Center) {
-        Box(Modifier.fillMaxWidth().height((8 * scale).dp).clip(RoundedCornerShape(41.dp)).background(color))
-        // Per-window normalization hides loudness differences, so amplify loud input vertically.
-        AudioWaveform(amplitudes = spikes, waveformBrush = SolidColor(color), progress = 0f,
-            spikeWidth = (7 * scale).dp, spikePadding = (8 * scale).dp, spikeRadius = (4 * scale).dp,
-            spikeAnimationSpec = snap(), onProgressChange = {},
-            modifier = Modifier.fillMaxWidth().height(48.dp).clearAndSetSemantics {}
-                .graphicsLayer { scaleY = 134 * scale / 48 * heightGain })
+    Canvas(modifier.clearAndSetSemantics {}) {
+        val factor = scale * density
+        val color = Color(0xFF7E7BFF)
+        val baseline = 8 * factor
+        drawRoundRect(color, Offset(0f, (size.height - baseline) / 2),
+            Size(size.width, baseline), CornerRadius(baseline / 2))
+        val spacing = size.width / amplitudes.size.coerceAtLeast(1)
+        val barWidth = minOf(7 * factor, spacing * 0.8f)
+        amplitudes.forEachIndexed { index, amplitude ->
+            // A fixed 0..100 scale keeps quiet input small even in an otherwise quiet window.
+            val height = maxOf(baseline, size.height * amplitude.coerceIn(0, 100) / 100f)
+            drawRoundRect(color, Offset(index * spacing + (spacing - barWidth) / 2, (size.height - height) / 2),
+                Size(barWidth, height), CornerRadius(4 * factor))
+        }
     }
 }
 
