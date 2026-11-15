@@ -24,7 +24,7 @@ class TripSelectionScreenTest {
         compose.setContent {
             TripSelectionScreen(TripSelectionViewModel.UiState(trips = trips, loading = false),
                 onBack = {}, onNewTrip = {}, onResumeTrip = { selected = it }, onRetry = {},
-                onRetryStart = {}, onDismissDialog = {}, onStartWithoutDestination = {})
+                onDismissDialog = {}, onStartWithoutDestination = {})
         }
         compose.onNodeWithText("새로 시작").assertIsDisplayed()
         compose.onNodeWithTag("trip-selection-list").performScrollToNode(hasTestTag("resume-trip-11"))
@@ -37,10 +37,11 @@ class TripSelectionScreenTest {
         var dismissed = 0
         compose.setContent {
             TripSelectionScreen(TripSelectionViewModel.UiState(loading = false, showDestinationDialog = true),
-                onBack = {}, onNewTrip = {}, onResumeTrip = {}, onRetry = {}, onRetryStart = {},
+                onBack = {}, onNewTrip = {}, onResumeTrip = {}, onRetry = {},
                 onDismissDialog = { dismissed++ }, onStartWithoutDestination = { starts++ })
         }
         compose.onNodeWithText("내비게이션 목적지가 아직 없어요").assertIsDisplayed()
+        compose.onNodeWithText("내비게이션에서 목적지를 설정하면 자동으로 기록을 시작해요.").assertIsDisplayed()
         compose.onNodeWithText("목적지 없이 시작").performClick()
         compose.onNodeWithText("닫기").performClick()
         compose.runOnIdle { assertEquals(1, starts); assertEquals(1, dismissed) }
@@ -49,7 +50,7 @@ class TripSelectionScreenTest {
     @Test fun drivingRestrictionKeepsBack_andHidesTripActions() {
         compose.setContent {
             TripSelectionScreen(TripSelectionViewModel.UiState(trips = trips, loading = false),
-                onBack = {}, onNewTrip = {}, onResumeTrip = {}, onRetry = {}, onRetryStart = {},
+                onBack = {}, onNewTrip = {}, onResumeTrip = {}, onRetry = {},
                 onDismissDialog = {}, onStartWithoutDestination = {}, browsingAllowed = false)
         }
         compose.onNodeWithText("뒤로가기").assertIsDisplayed().assertIsEnabled()
@@ -63,10 +64,10 @@ class TripSelectionScreenTest {
             TripSelectionScreen(TripSelectionViewModel.UiState(loading = false, startError = "생성 결과 확인 필요",
                 canStartNewTrip = false, canRetryStart = false),
                 onBack = {}, onNewTrip = {}, onResumeTrip = {}, onRetry = { refreshes++ },
-                onRetryStart = { error("must refresh instead of repeating create") },
                 onDismissDialog = {}, onStartWithoutDestination = {})
         }
         compose.onNodeWithText("새로 시작").assertIsNotEnabled()
+        compose.onNodeWithText("생성 결과 확인 필요").assertDoesNotExist()
         compose.onNodeWithText("다시 불러오기").performClick()
         compose.runOnIdle { assertEquals(1, refreshes) }
     }
@@ -75,13 +76,26 @@ class TripSelectionScreenTest {
         compose.setContent {
             CompositionLocalProvider(LocalDensity provides Density(1f, 2f)) {
                 TripSelectionScreen(TripSelectionViewModel.UiState(trips = trips, loading = false),
-                    onBack = {}, onNewTrip = {}, onResumeTrip = {}, onRetry = {}, onRetryStart = {},
+                    onBack = {}, onNewTrip = {}, onResumeTrip = {}, onRetry = {},
                     onDismissDialog = {}, onStartWithoutDestination = {}, modifier = Modifier.requiredSize(600.dp, 240.dp))
             }
         }
         compose.onNodeWithTag("trip-selection-list").assertHeightIsAtLeast(1.dp)
         compose.onNodeWithTag("trip-selection-list").performScrollToNode(hasTestTag("resume-trip-11"))
         compose.onNodeWithTag("resume-trip-11").assertIsDisplayed().assertIsEnabled()
+    }
+
+    @Test fun listFailureOffersRefresh_withoutShowingAnEmptyListOrInlineError() {
+        var refreshes = 0
+        compose.setContent {
+            TripSelectionScreen(TripSelectionViewModel.UiState(loading = false, listError = "여행 목록을 가져오지 못했어요"),
+                onBack = {}, onNewTrip = {}, onResumeTrip = {}, onRetry = { refreshes++ },
+                onDismissDialog = {}, onStartWithoutDestination = {})
+        }
+        compose.onNodeWithText("여행 목록을 가져오지 못했어요").assertDoesNotExist()
+        compose.onNodeWithText("이어서 기록할 여행이 없어요\n새 주행을 시작해 보세요").assertDoesNotExist()
+        compose.onNodeWithText("다시 불러오기").performClick()
+        compose.runOnIdle { assertEquals(1, refreshes) }
     }
 
     private val trips = (0..11).map { index -> OngoingTrip("trip-$index",

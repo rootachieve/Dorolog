@@ -1,6 +1,8 @@
 package com.forever.dorolog
 
 import android.car.Car
+import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -26,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
@@ -39,10 +42,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.currentStateAsState
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import java.time.ZoneId
@@ -79,6 +86,15 @@ internal fun TripSelectionRoute(
     val uiState by vm.uiState.collectAsStateWithLifecycle()
     SideEffect { vm.setBrowsingAllowed(browsingAllowed) }
     val context = LocalContext.current
+    val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
+    LaunchedEffect(uiState.toastMessage, lifecycleState) {
+        if (lifecycleState.isAtLeast(Lifecycle.State.RESUMED)) {
+            uiState.toastMessage?.let {
+                Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+                vm.consumeToast()
+            }
+        }
+    }
     val source = remember(vm, context.applicationContext) {
         DepartureVehicleSource(context.applicationContext, vm::onNavigationChanged,
             onSpeed = {}, onLocation = vm::onLocationChanged, observeVehicle = false,
@@ -96,7 +112,6 @@ internal fun TripSelectionRoute(
         onNewTrip = { if (browsingAllowed) vm.startNewTrip() },
         onResumeTrip = { if (browsingAllowed) vm.resumeTrip(it) },
         onRetry = vm::retry,
-        onRetryStart = { if (browsingAllowed) vm.retryStart() },
         onDismissDialog = vm::dismissDestinationDialog,
         onStartWithoutDestination = { if (browsingAllowed) vm.confirmWithoutDestination() },
         modifier = modifier, browsingAllowed = browsingAllowed)
@@ -109,7 +124,6 @@ internal fun TripSelectionScreen(
     onNewTrip: () -> Unit,
     onResumeTrip: (String) -> Unit,
     onRetry: () -> Unit,
-    onRetryStart: () -> Unit,
     onDismissDialog: () -> Unit,
     onStartWithoutDestination: () -> Unit,
     modifier: Modifier = Modifier,
@@ -146,16 +160,11 @@ internal fun TripSelectionScreen(
                         color = ForeverColors.selectionBody, fontSize = 18.sp)
                 }
             }
-            if (uiState.startError != null && !uiState.showDestinationDialog) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(uiState.startError, Modifier.weight(1f), fontFamily = SelectionFont,
-                        fontSize = 18.sp, color = ForeverColors.selectionBody)
-                    TextButton(onClick = if (uiState.canRetryStart) onRetryStart else onRetry, enabled = !uiState.starting,
-                        modifier = Modifier.heightIn(min = 64.dp)) {
-                        Text(if (uiState.canRetryStart) "다시 시도" else "다시 불러오기", fontFamily = SelectionFont, fontSize = 18.sp,
-                            color = ForeverColors.selectionAccent)
-                    }
+            if (uiState.startError != null && !uiState.canRetryStart && !uiState.showDestinationDialog) {
+                TextButton(onClick = onRetry, enabled = !uiState.starting,
+                    modifier = Modifier.heightIn(min = 64.dp)) {
+                    Text("다시 불러오기", fontFamily = SelectionFont, fontSize = 18.sp,
+                        color = ForeverColors.selectionAccent)
                 }
             }
         }
@@ -205,7 +214,7 @@ internal fun TripSelectionScreen(
     }
 
     if (browsingAllowed && uiState.showDestinationDialog) {
-        DestinationMissingDialog(uiState.starting, uiState.startError, onDismissDialog, onStartWithoutDestination)
+        DestinationMissingDialog(uiState.starting, onDismissDialog, onStartWithoutDestination)
     }
 }
 
@@ -272,10 +281,7 @@ private fun SelectionTrips(
                 }
             }
             uiState.listError != null -> item(span = { GridItemSpan(maxLineSpan) }) {
-                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically)) {
-                    Text(uiState.listError, fontFamily = SelectionFont, color = ForeverColors.selectionBody,
-                        fontSize = 20.sp, textAlign = TextAlign.Center)
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     TextButton(onClick = onRetry, enabled = !uiState.starting, modifier = Modifier.heightIn(min = 64.dp)) {
                         Text("다시 불러오기", fontFamily = SelectionFont, color = ForeverColors.selectionAccent, fontSize = 18.sp)
                     }
@@ -329,10 +335,15 @@ private fun SelectionTripCard(trip: OngoingTrip, latest: Boolean, enabled: Boole
 }
 
 @Composable
-private fun DestinationMissingDialog(starting: Boolean, error: String?, onDismiss: () -> Unit, onStart: () -> Unit) {
+private fun DestinationMissingDialog(starting: Boolean, onDismiss: () -> Unit, onStart: () -> Unit) {
     Dialog(onDismissRequest = { if (!starting) onDismiss() },
         properties = DialogProperties(dismissOnBackPress = !starting, dismissOnClickOutside = !starting,
             usePlatformDefaultWidth = false)) {
+        val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+        SideEffect {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            window?.setDimAmount(0.45f)
+        }
         Surface(Modifier.padding(24.dp).widthIn(max = 900.dp).fillMaxWidth(),
             shape = RoundedCornerShape(24.dp), color = ForeverColors.selectionSurface) {
             BoxWithConstraints {
@@ -346,10 +357,8 @@ private fun DestinationMissingDialog(starting: Boolean, error: String?, onDismis
                 Text("내비게이션 목적지가 아직 없어요", fontFamily = SelectionFont,
                     fontWeight = FontWeight.SemiBold, fontSize = if (spacious) 36.sp else 28.sp,
                     color = ForeverColors.selectionTitle, textAlign = TextAlign.Center)
-                Text("닫은 뒤 내비게이션에서 목적지를 설정해 주세요.", fontFamily = SelectionFont,
+                Text("내비게이션에서 목적지를 설정하면 자동으로 기록을 시작해요.", fontFamily = SelectionFont,
                     fontSize = if (spacious) 22.sp else 18.sp, color = ForeverColors.selectionBody, textAlign = TextAlign.Center)
-                if (error != null) Text(error, fontFamily = SelectionFont, fontSize = 18.sp,
-                    color = ForeverColors.selectionBody, textAlign = TextAlign.Center)
                 if (starting) CircularProgressIndicator(Modifier.size(28.dp), color = ForeverColors.selectionAccent)
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     Button(onClick = onStart, enabled = !starting, modifier = Modifier.weight(1f).heightIn(min = buttonHeight),

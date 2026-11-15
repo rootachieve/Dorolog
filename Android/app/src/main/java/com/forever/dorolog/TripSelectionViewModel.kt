@@ -19,6 +19,7 @@ class TripSelectionViewModel(private val repository: TripSelectionRepository = T
         val listError: String? = null,
         val starting: Boolean = false,
         val startError: String? = null,
+        val toastMessage: String? = null,
         val showDestinationDialog: Boolean = false,
         val startedTripId: String? = null,
         val startedDestination: Destination? = null,
@@ -27,6 +28,7 @@ class TripSelectionViewModel(private val repository: TripSelectionRepository = T
     )
     private val _uiState = MutableStateFlow(UiState())
     val uiState = _uiState.asStateFlow()
+    fun consumeToast() { _uiState.update { it.copy(toastMessage = null) } }
     private var loadJob: Job? = null
     private var navigationAvailable: Boolean? = null
     private var destination: Destination? = null
@@ -47,7 +49,8 @@ class TripSelectionViewModel(private val repository: TripSelectionRepository = T
                 _uiState.update { it.copy(trips = trips, loading = false) }
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (_: Exception) {
-                _uiState.update { it.copy(loading = false, listError = "여행 목록을 가져오지 못했어요") }
+                _uiState.update { it.copy(loading = false, listError = "여행 목록을 가져오지 못했어요",
+                    toastMessage = "여행 목록을 가져오지 못했어요. 다시 불러와 주세요") }
             }
         }
     }
@@ -55,9 +58,25 @@ class TripSelectionViewModel(private val repository: TripSelectionRepository = T
     fun onNavigationChanged(value: Destination?, available: Boolean) {
         navigationAvailable = available
         destination = value
+        startWithDestinationIfReady()
     }
-    fun onLocationChanged(value: VehicleLocation) { location = value }
-    fun setBrowsingAllowed(value: Boolean) { browsingAllowed = value }
+    fun onLocationChanged(value: VehicleLocation) {
+        location = value
+        startWithDestinationIfReady()
+    }
+    fun setBrowsingAllowed(value: Boolean) {
+        browsingAllowed = value
+        startWithDestinationIfReady()
+    }
+    private fun startWithDestinationIfReady() {
+        val state = uiState.value
+        if (browsingAllowed && state.showDestinationDialog && !state.starting &&
+            (pendingTripId != null || state.canStartNewTrip) &&
+            navigationAvailable == true && destination != null &&
+            (pendingTripId != null || !location.address.isNullOrBlank() || location.latitude != null && location.longitude != null)) {
+            prepareStart()
+        }
+    }
     fun clearVehicleContext() {
         navigationAvailable = null
         destination = null
@@ -84,21 +103,12 @@ class TripSelectionViewModel(private val repository: TripSelectionRepository = T
     }
 
     private fun prepareStart() {
-        _uiState.update { it.copy(starting = true, startError = null, showDestinationDialog = false) }
+        _uiState.update { it.copy(starting = true, startError = null, toastMessage = null, showDestinationDialog = false) }
         viewModelScope.launch {
             try {
-                val id = pendingTripId
-                if (id != null) {
-                    check(browsingAllowed) { "안전한 곳에 정차한 후 여행을 시작해 주세요" }
-                    val selected = uiState.value.trips.first { it.id == id }
-                    val trip = if (selected.status == "finished") repository.resume(id) else selected
-                    ensureActive()
-                    tripStarted(trip)
-                } else {
-                    check(navigationAvailable == true) { "내비게이션 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요" }
-                    if (destination == null) _uiState.update { it.copy(showDestinationDialog = true) }
-                    else submitNew(destination)
-                }
+                check(navigationAvailable == true) { "내비게이션 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요" }
+                if (destination == null) _uiState.update { it.copy(showDestinationDialog = true) }
+                else submitSelectedTrip(destination)
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (error: Exception) {
                 showStartError(error)
@@ -110,17 +120,31 @@ class TripSelectionViewModel(private val repository: TripSelectionRepository = T
         if (!uiState.value.starting) _uiState.update { it.copy(showDestinationDialog = false, startError = null) }
     }
     fun confirmWithoutDestination() {
-        if (!browsingAllowed || !uiState.value.showDestinationDialog || uiState.value.starting || !uiState.value.canStartNewTrip) return
+        if (!browsingAllowed || !uiState.value.showDestinationDialog || uiState.value.starting ||
+            pendingTripId == null && !uiState.value.canStartNewTrip) return
         _uiState.update { it.copy(starting = true, startError = null) }
         viewModelScope.launch {
             try {
                 check(navigationAvailable == true) { "내비게이션 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요" }
-                submitNew(null)
+                submitSelectedTrip(null)
                 _uiState.update { it.copy(showDestinationDialog = false) }
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (error: Exception) {
                 showStartError(error)
             } finally { _uiState.update { it.copy(starting = false) } }
+        }
+    }
+
+    private suspend fun submitSelectedTrip(requestedDestination: Destination?) {
+        check(browsingAllowed) { "안전한 곳에 정차한 후 여행을 시작해 주세요" }
+        val id = pendingTripId
+        if (id == null) {
+            submitNew(requestedDestination)
+        } else {
+            val selected = uiState.value.trips.first { it.id == id }
+            val trip = if (selected.status == "finished") repository.resume(id) else selected
+            currentCoroutineContext().ensureActive()
+            tripStarted(trip, requestedDestination)
         }
     }
 
@@ -144,15 +168,18 @@ class TripSelectionViewModel(private val repository: TripSelectionRepository = T
         tripStarted(trip)
     }
 
-    private fun tripStarted(trip: OngoingTrip) {
-        _uiState.update { it.copy(startedTripId = trip.id, startedDestination = trip.lastDestination?.let { place ->
+    private fun tripStarted(trip: OngoingTrip, startedDestination: Destination? = trip.lastDestination?.let { place ->
             Destination(place.name, place.latitude, place.longitude, place.address)
-        }) }
+        }) {
+        _uiState.update { it.copy(showDestinationDialog = false, startedTripId = trip.id, startedDestination = startedDestination) }
     }
 
     private fun showStartError(error: Exception) {
-        _uiState.update { it.copy(showDestinationDialog = it.showDestinationDialog && it.canRetryStart,
-            startError = if (!it.canRetryStart) "여행 생성 결과를 확인하지 못했어요. 최근 목록을 새로 불러와 이어가기를 선택해 주세요"
-            else if (error is IllegalStateException) error.message else "여행을 시작하지 못했어요. 다시 시도해 주세요") }
+        _uiState.update {
+            val message = if (!it.canRetryStart) "여행 생성 결과를 확인하지 못했어요. 최근 목록을 새로 불러와 이어가기를 선택해 주세요"
+                else if (error is IllegalStateException) error.message else "여행을 시작하지 못했어요. 다시 시도해 주세요"
+            it.copy(showDestinationDialog = it.showDestinationDialog && it.canRetryStart,
+                startError = message, toastMessage = message)
+        }
     }
 }

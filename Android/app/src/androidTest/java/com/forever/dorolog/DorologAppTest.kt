@@ -85,6 +85,7 @@ class DorologAppTest {
         compose.onNodeWithText("새로 시작").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithTag("resume-selected-trip").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithTag("departure-screen").assertDoesNotExist()
+        compose.runOnUiThread { selectionViewModel.onNavigationChanged(Destination("부산"), true) }
         compose.onNodeWithTag("resume-selected-trip").performClick()
         compose.mainClock.advanceTimeByFrame()
         compose.onNodeWithText("목적지 없이 시작").assertDoesNotExist()
@@ -109,6 +110,7 @@ class DorologAppTest {
             error("active trip must enter questions without resume")
         })
         openScreen("시작하기", "trip-selection-screen")
+        compose.runOnUiThread { selectionViewModel.onNavigationChanged(Destination("부산"), true) }
         compose.onNodeWithTag("resume-selected-trip").performClick()
         compose.mainClock.advanceTimeBy(500)
         waitForNode(hasTestTag("departure-screen"))
@@ -371,6 +373,7 @@ class DorologAppTest {
     }
 
     private fun startSelectedTrip() {
+        compose.runOnUiThread { selectionViewModel.onNavigationChanged(Destination("부산"), true) }
         waitForNode(hasTestTag("resume-selected-trip") and isEnabled()).performClick()
         compose.mainClock.advanceTimeBy(500)
         waitForNode(hasTestTag("departure-screen"))

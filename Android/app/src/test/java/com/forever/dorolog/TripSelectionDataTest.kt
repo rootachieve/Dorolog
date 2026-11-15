@@ -19,6 +19,16 @@ class TripSelectionDataTest {
         "destinationName":null,"destinationLatitude":null,"destinationLongitude":null,
         "status":"active","startedAt":"2026-11-13T00:00:00Z","endedAt":null,"storyCount":0}"""
 
+    @Test fun recentTrips_acceptsEmptyServerList_butRejectsMissingOrNullList() = runTest {
+        val empty = gson.fromJson("""{"trips":[]}""", OngoingTripsResponseDto::class.java)
+        assertEquals(emptyList<OngoingTrip>(), TripSelectionRepository(loadTrips = { empty }).load())
+        for (malformed in listOf("{}", """{"trips":null}""", """{"trips":[null]}""")) {
+            assertThrows(IllegalArgumentException::class.java) {
+                gson.fromJson(malformed, OngoingTripsResponseDto::class.java).toModel()
+            }
+        }
+    }
+
     @Test fun recentTrips_acceptFlatFinishedTripsWithoutCoordinates_andKeepServerOrder() = runTest {
         val response = gson.fromJson("""{"trips":[
             {"id":"recently-resumed","originName":"서울","originLatitude":null,"originLongitude":null,
