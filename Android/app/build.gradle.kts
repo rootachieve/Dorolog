@@ -23,8 +23,8 @@ android {
         applicationId = "com.forever.dorolog"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.0.1"
 
         testInstrumentationRunner = "com.forever.dorolog.DorologTestRunner"
         val voiceUrl = providers.gradleProperty("dorolog.voiceUrl").orElse("").get()
