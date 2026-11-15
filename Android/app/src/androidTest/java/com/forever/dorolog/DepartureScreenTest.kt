@@ -202,6 +202,36 @@ class DepartureScreenTest {
         compose.onNodeWithText("지금은 기록하지 않아요. 준비되면 다시 들을게요.").assertDoesNotExist()
     }
 
+    @Test fun longFollowUpQuestion_fitsAboveWave_inNarrowAndShortWindowsWithLargeText() {
+        var viewport by androidx.compose.runtime.mutableStateOf(850 to 592)
+        var fontScale by androidx.compose.runtime.mutableStateOf(1f)
+        var question by androidx.compose.runtime.mutableStateOf("이번 여행은 어떤가요?")
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(0.5f, fontScale)) {
+                Box(Modifier.requiredSize(viewport.first.dp, viewport.second.dp).testTag("question-viewport")) {
+                    TalkScreen(DepartureViewModel.UiState(phase = DepartureViewModel.Phase.Talk),
+                        DrivingViewModel.UiState(question = question, paused = false), {}, {}, {})
+                }
+            }
+        }
+        compose.runOnIdle {
+            question = "그때 가족들과 함께 여행하며 가장 기억에 남았던 순간은 무엇이었나요? 그 순간에 어떤 마음이 들었는지도 이야기해 주세요."
+        }
+        for ((width, height, scale) in listOf(Triple(850, 592, 1f), Triple(360, 640, 2f), Triple(640, 360, 2f))) {
+            compose.runOnIdle { viewport = width to height; fontScale = scale }
+            val node = compose.onNodeWithText("“$question”").assertIsDisplayed()
+            val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            assertFalse("Question is clipped at $viewport, font scale $scale", layouts.single().hasVisualOverflow)
+            val bounds = node.getUnclippedBoundsInRoot()
+            val frame = compose.onNodeWithTag("question-viewport").getUnclippedBoundsInRoot()
+            val wave = compose.onNodeWithTag("conversation-wave").getUnclippedBoundsInRoot()
+            assertTrue("Question leaves viewport at $viewport", bounds.left >= frame.left && bounds.right <= frame.right &&
+                bounds.top >= frame.top && bounds.bottom <= frame.bottom)
+            assertTrue("Question overlaps waveform at $viewport", bounds.bottom <= wave.top)
+        }
+    }
+
     @Test fun pausedTooltipAndControls_fitNarrowAndShortWindows_withLargeText() {
         var viewport by androidx.compose.runtime.mutableStateOf(850 to 592)
         var fontScale by androidx.compose.runtime.mutableStateOf(1f)

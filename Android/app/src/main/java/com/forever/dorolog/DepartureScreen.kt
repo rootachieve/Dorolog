@@ -19,9 +19,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -55,6 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -248,28 +248,30 @@ fun DepartureScreen(
         val headerHeight = with(density) { headerPixels.toDp() }
         val arrowSize = (126 * scale).dp.coerceAtLeast(48.dp)
         val side = (76 * scale).dp.coerceAtLeast(12.dp)
-        val questionHeight = (320 * scale).dp.coerceAtLeast(144.dp)
+        val questionHeight = (320 * scale).dp.coerceAtLeast((144 * density.fontScale).dp)
         val centerY = height * (0.375f + (0.32f - 0.375f) * progress)
-        val questionTop = maxOf(headerHeight + 12.dp, centerY - questionHeight / 2)
-        val waveformTop = height * (631f / 1184f) - (67 * scale).dp
+        val questionTop = maxOf(headerHeight + 12.dp, centerY - questionHeight / 2).coerceAtMost(height)
+        val waveformTop = maxOf(height * (631f / 1184f) - (67 * scale).dp,
+            headerHeight + questionHeight + 24.dp)
+            .coerceAtMost((height - (134 * scale).dp - 16.dp).coerceAtLeast(0.dp))
         val questionBottom = minOf(
             questionTop + questionHeight,
             height - (404 * scale).dp - 16.dp,
             if (progress > 0.5f) waveformTop - 12.dp else height,
         )
-        val availableQuestionHeight = (questionBottom - questionTop).coerceAtLeast(48.dp)
-        val questionWidth = (width - (side + arrowSize + 12.dp) * 2).coerceAtLeast(width * 0.5f)
+        val availableQuestionHeight = (questionBottom - questionTop).coerceAtLeast(0.dp)
+        val questionWidth = if (uiState.phase == DepartureViewModel.Phase.Talk) (width - side * 2).coerceAtLeast(0.dp)
+            else (width - (side + arrowSize + 12.dp) * 2).coerceAtLeast(width * 0.5f)
 
         QuestionCharacter(progress, scale, Modifier.fillMaxSize().testTag("topic-character"))
 
         if (progress > 0f && uiState.topics.isNotEmpty()) {
+            val waveModifier = Modifier.align(Alignment.TopCenter).offset(y = waveformTop)
+                .width((812 * scale).dp).height((134 * scale).dp).testTag("conversation-wave")
             if (amplitudes == null) {
-                ConversationWave(scale, progress, Modifier.fillMaxSize().testTag("conversation-wave"))
+                ConversationWave(scale, progress, waveModifier)
             } else {
-                LiveConversationWave(amplitudes, scale, Modifier.align(Alignment.TopCenter)
-                    .offset(y = height * (631f / 1184f) - (67 * scale).dp)
-                    .width((812 * scale).dp).height((134 * scale).dp)
-                    .testTag("conversation-wave"))
+                LiveConversationWave(amplitudes, scale, waveModifier)
             }
         }
 
@@ -315,7 +317,7 @@ fun DepartureScreen(
                     TextButton(onClick = onRetry) { Text(stringResource(R.string.retry), color = ink, fontSize = 20.sp) }
                 }
                 uiState.topics.isEmpty() -> StatusMessage(stringResource(R.string.recommendations_empty), ink)
-                else -> QuestionPager(uiState, selected, scale, ink, availableQuestionHeight, onSelectTopic, animationsEnabled)
+                else -> QuestionPager(uiState, selected, scale, ink, onSelectTopic, animationsEnabled)
             }
         }
         if (!uiState.loading && !uiState.contentError && uiState.topics.size > 1 && uiState.phase != DepartureViewModel.Phase.Talk) {
@@ -334,7 +336,7 @@ fun DepartureScreen(
 @Composable
 private fun QuestionPager(
     state: DepartureViewModel.UiState, selected: Int, scale: Float, ink: Color,
-    questionHeight: androidx.compose.ui.unit.Dp, onSelect: (String) -> Unit, animationsEnabled: Boolean,
+    onSelect: (String) -> Unit, animationsEnabled: Boolean,
 ) {
     val pager = rememberPagerState(initialPage = selected, pageCount = { state.topics.size })
     val select by rememberUpdatedState(onSelect)
@@ -353,11 +355,12 @@ private fun QuestionPager(
     HorizontalPager(state = pager, key = { state.topics[it].id },
         userScrollEnabled = state.phase == DepartureViewModel.Phase.Ready,
         modifier = Modifier.fillMaxSize().testTag("recommended-topics")) { page ->
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = questionHeight),
-            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text("“" + state.topics[page].question + "”", color = ink, textAlign = TextAlign.Center,
-                fontFamily = QuestionFont, fontSize = (100 * scale).coerceAtLeast(24f).sp,
-                lineHeight = (135 * scale).coerceAtLeast(34f).sp)
+                fontFamily = QuestionFont,
+                autoSize = TextAutoSize.StepBased(minFontSize = 12.sp,
+                    maxFontSize = (100 * scale).coerceAtLeast(24f).sp),
+                lineHeight = ((135 * scale).coerceAtLeast(34f) / (100 * scale).coerceAtLeast(24f)).em)
         }
     }
 }
@@ -440,7 +443,7 @@ private fun QuestionCharacter(progress: Float, scale: Float, modifier: Modifier)
 private fun ConversationWave(scale: Float, progress: Float, modifier: Modifier) {
     Canvas(modifier.graphicsLayer { alpha = progress }) {
         val factor = scale * density
-        val center = Offset(size.width / 2, size.height * (631f / 1184f))
+        val center = Offset(size.width / 2, size.height / 2)
         val color = Color(0xFF7E7BFF)
         drawLine(color, center - Offset(406 * factor, 0f), center + Offset(406 * factor, 0f),
             strokeWidth = 8 * factor, cap = StrokeCap.Round)
