@@ -99,6 +99,7 @@ internal class DrivingViewModel(
                 if (speaking) {
                     awaitingResponse = false
                     cancelSilence()
+                    _uiState.update { it.copy(status = "말소리를 듣고 있어요") }
                 } else scheduleSilence(reset = true)
             }
 
@@ -119,11 +120,12 @@ internal class DrivingViewModel(
                 awaitingResponse = true
                 serverSpeaking = false
                 cancelSilence()
+                _uiState.update { it.copy(status = "질문을 준비하고 있어요") }
             }
 
             override fun onPlaybackChanged(playing: Boolean) {
                 if (!running) return
-                _uiState.update { it.copy(playing = playing) }
+                _uiState.update { it.copy(playing = playing, status = if (playing) "질문을 읽고 있어요" else null) }
                 if (playing) cancelSilence()
             }
 
@@ -136,7 +138,7 @@ internal class DrivingViewModel(
 
             override fun onWaitingForAudio(waiting: Boolean) {
                 if (!running) return
-                _uiState.update { it.copy(waitingForAudio = waiting, playing = false) }
+                _uiState.update { it.copy(waitingForAudio = waiting, playing = false, status = null) }
                 if (waiting) {
                     awaitingResponse = false
                     serverReady = false
@@ -241,7 +243,7 @@ internal class DrivingViewModel(
         cancelSilence()
         runtime.stop()
         _uiState.update { it.copy(
-            paused = true, waitingForAudio = false, capturing = false, playing = false,
+            paused = true, waitingForAudio = false, capturing = false, playing = false, status = null,
             amplitudes = List(WAVEFORM_SIZE) { 0 },
         ) }
     }
@@ -273,10 +275,18 @@ internal class DrivingViewModel(
         if (!running || !serverReady || serverSpeaking || !state.capturing || state.waitingForAudio ||
             state.playing || awaitingResponse || silenceJob?.isActive == true) return
         silenceJob = viewModelScope.launch {
-            delay(SILENCE_MILLIS)
+            for (remaining in (SILENCE_MILLIS / 1_000).toInt() downTo 1) {
+                _uiState.update { it.copy(status = "무음 확인 중 · 다음 질문 요청까지 ${remaining}초") }
+                delay(1_000)
+            }
             if (running && serverReady && !serverSpeaking && uiState.value.capturing && !uiState.value.waitingForAudio &&
-                !uiState.value.playing && !awaitingResponse && runtime.requestFollowUp()) {
-                awaitingResponse = true
+                !uiState.value.playing && !awaitingResponse) {
+                if (runtime.requestFollowUp()) {
+                    awaitingResponse = true
+                    _uiState.update { it.copy(status = "다음 질문을 요청했어요 · 응답 대기 중") }
+                } else if (running && serverReady) {
+                    _uiState.update { it.copy(status = "다음 질문을 요청하지 못했어요. 일시정지 후 재개해 주세요") }
+                }
             }
             silenceJob = null
         }
@@ -294,6 +304,6 @@ internal class DrivingViewModel(
 
     companion object {
         const val WAVEFORM_SIZE = 96
-        const val SILENCE_MILLIS = 30_000L
+        const val SILENCE_MILLIS = 5_000L
     }
 }

@@ -119,7 +119,7 @@ class DrivingConversationTransportTest {
         assertTrue(fixture.transport.requestFollowUp())
         val request = JsonParser.parseString(socket.texts.last()).asJsonObject
         assertEquals("response.create", request["type"].asString)
-        assertEquals(30_000, request["silence_ms"].asInt)
+        assertEquals(5_000, request["silence_ms"].asInt)
         socket.message("""{"type":"response.started","response_id":"r1"}""")
         assertFalse(fixture.transport.requestFollowUp())
         socket.message("""{"type":"response.text","response_id":"old","text":"무시"}""")

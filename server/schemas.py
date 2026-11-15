@@ -159,7 +159,7 @@ class ConversationResponseCreateMessage(BaseModel):
 
     type: Literal["response.create"]
     reason: Literal["silence"]
-    silence_ms: Literal[30000]
+    silence_ms: Literal[5000, 30000]
 
 
 class ConversationResponseCancelMessage(BaseModel):

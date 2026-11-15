@@ -17,6 +17,7 @@ import android.os.Looper
 import android.telecom.TelecomManager
 import android.telephony.PhoneStateListener
 import android.telephony.TelephonyManager
+import android.util.Log
 import androidx.core.content.ContextCompat
 import ai.pleos.playground.tts.TextToSpeech
 import ai.pleos.playground.tts.constant.ErrorType
@@ -296,6 +297,7 @@ internal class DrivingAudioSession(
                     }
                 }
                 override fun onReady(sessionId: String) = dispatch {
+                    Log.i("DrivingConversation", "session.ready")
                     this@DrivingAudioSession.sessionId = sessionId
                     serverReady = true
                     connectionTimeout?.cancel()
@@ -303,10 +305,12 @@ internal class DrivingAudioSession(
                     startCapture(current)
                 }
                 override fun onQuestion(text: String) = dispatch {
+                    Log.i("DrivingConversation", "response.text received chars=${text.length}")
                     responseQuestion = text
                     listener?.onQuestion(text)
                 }
                 override fun onSpeechChanged(speaking: Boolean) = dispatch {
+                    Log.i("DrivingConversation", if (speaking) "input.speech_started" else "input.speech_stopped")
                     if (speaking && !responseActive) {
                         if (followUpPending) transport?.cancelResponse()
                         followUpPending = false
@@ -314,9 +318,13 @@ internal class DrivingAudioSession(
                     }
                     listener?.onSpeechChanged(speaking)
                 }
-                override fun onResponseStarted() = dispatch { beginResponse(current, received = true) }
+                override fun onResponseStarted() = dispatch {
+                    Log.i("DrivingConversation", "response.started")
+                    beginResponse(current, received = true)
+                }
                 override fun onAudio(pcm: ByteArray) = dispatch { enqueueAudio(pcm, current) }
                 override fun onResponseDone() = dispatch {
+                    Log.i("DrivingConversation", "response.done text=${responseQuestion != null} audio=${playbackQueue != null}")
                     responseTimeout?.cancel()
                     val question = responseQuestion
                     when {
@@ -424,8 +432,15 @@ internal class DrivingAudioSession(
     }
 
     override fun requestFollowUp(): Boolean {
-        if (!active || !focusHeld || !serverReady || responseActive || followUpPending) return false
-        if (transport?.requestFollowUp() != true) return false
+        if (!active || !focusHeld || !serverReady || responseActive || followUpPending) {
+            Log.i("DrivingConversation", "response.create blocked active=$active focus=$focusHeld ready=$serverReady response=$responseActive pending=$followUpPending")
+            return false
+        }
+        if (transport?.requestFollowUp() != true) {
+            Log.w("DrivingConversation", "response.create send failed")
+            return false
+        }
+        Log.i("DrivingConversation", "response.create sent silence_ms=5000")
         followUpPending = true
         awaitResponse(generation)
         return true
@@ -631,6 +646,7 @@ internal class DrivingAudioSession(
     }
 
     private fun serverFailure(message: String) {
+        Log.w("DrivingConversation", "server failure: $message")
         suspendAudio()
         listener?.onServerUnavailable(message)
         startCapture(generation)

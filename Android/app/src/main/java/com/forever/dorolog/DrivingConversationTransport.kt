@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit
  * question:string, destination_name?:string, trip_id:string,
  * current_address?:string, latitude?:number, longitude?:number,
  * audio:{encoding:"pcm_s16le",sample_rate_hz:24000,
- * channels:1,frame_duration_ms:20} }; response.create { reason:"silence",silence_ms:30000 };
+ * channels:1,frame_duration_ms:20} }; response.create { reason:"silence",silence_ms:5000 };
  * response.cancel {}. Client binary messages are microphone PCM (normally 960 bytes / 20 ms).
  * location.changed {trip_id:string,current_address:string|null,
  * latitude:number|null,longitude:number|null} precedes PCM recorded at the updated location.
@@ -32,7 +32,7 @@ import java.util.concurrent.TimeUnit
  * While receiving microphone PCM, the server must use authoritative voice activity detection
  * that distinguishes speech from vehicle/road noise and emit paired input.speech_started {}
  * and input.speech_stopped {} events after session.ready. The client suppresses its silence
- * timer while speech is active and requests a follow-up 30 seconds after speech stops.
+ * timer while speech is active and requests a follow-up 5 seconds after speech stops.
  * If response.create arrives while server VAD detects speech, decline it and resend
  * input.speech_started instead of starting an assistant response. Input capture continues
  * until response.started acknowledges acceptance, so in-flight speech is not clipped.
@@ -195,7 +195,7 @@ internal class DrivingConversationTransport(
 
     fun requestFollowUp(): Boolean = synchronized(lock) {
         if (!ready || responseId != null) return false
-        sendControl(mapOf("type" to "response.create", "reason" to "silence", "silence_ms" to 30_000))
+        sendControl(mapOf("type" to "response.create", "reason" to "silence", "silence_ms" to 5_000))
     }
 
     fun cancelResponse() {

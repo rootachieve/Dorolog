@@ -216,11 +216,13 @@ Android가 연결 직후 보내는 첫 JSON:
 }
 ```
 
-### 30초 무음
+### 5초 무음
 
 ```json
-{ "type": "response.create", "reason": "silence", "silence_ms": 30000 }
+{ "type": "response.create", "reason": "silence", "silence_ms": 5000 }
 ```
+
+Android는 기본 5초 무음 뒤 실제 대기 시간을 `silence_ms: 5000`으로 전송한다. 서버는 기존 앱과의 호환을 위해 `30000`도 허용한다. `5000` 요청을 받으려면 변경된 서버 스키마를 재배포해야 한다.
 
 서버 응답 순서:
 
@@ -239,7 +241,7 @@ Android가 연결 직후 보내는 첫 JSON:
 
 선택한 첫 질문은 서버 연결 전에 Pleos TextToSpeech SDK 3.3.1의 온디바이스 모드로 한국어 낭독한다. 완료한 첫 질문은 같은 여행을 일시 정지 후 재개할 때 반복하지 않는다. 서버 주소가 없어도 첫 질문 낭독 후 마이크 입력을 확인할 수 있다.
 
-후속 응답에 PCM이 없으면 `response.done`에서 마지막 `response.text` 전체 질문을 Pleos TTS로 한 번 읽는다. 여러 텍스트 이벤트는 델타가 아닌 최신 전체 질문을 전달한다. PCM이 있으면 기존 `AudioTrack` 재생을 사용해 중복 낭독하지 않는다. `response.started`부터 마이크를 멈추고 실제 재생이 끝난 뒤 녹음과 30초 침묵 타이머를 재개한다.
+후속 응답에 PCM이 없으면 `response.done`에서 마지막 `response.text` 전체 질문을 Pleos TTS로 한 번 읽는다. 여러 텍스트 이벤트는 델타가 아닌 최신 전체 질문을 전달한다. PCM이 있으면 기존 `AudioTrack` 재생을 사용해 중복 낭독하지 않는다. `response.started`부터 마이크를 멈추고 실제 재생이 끝난 뒤 녹음과 5초 침묵 타이머를 재개한다.
 
 통화·차량 안전 경고·백그라운드 전환·오디오 포커스 상실은 녹음과 TTS를 함께 중단한다. TTS 초기화·재생 실패나 응답 지연은 오류를 표시하고 일시 정지한다.
 

@@ -199,11 +199,13 @@ Android가 연결 직후 보내는 첫 JSON:
 }
 ```
 
-### 30초 무음
+### 5초 무음
 
 ```json
-{ "type": "response.create", "reason": "silence", "silence_ms": 30000 }
+{ "type": "response.create", "reason": "silence", "silence_ms": 5000 }
 ```
+
+Android는 기본 5초 무음 뒤 실제 대기 시간을 `silence_ms: 5000`으로 전송한다. 서버는 기존 앱과의 호환을 위해 `30000`도 허용한다. `5000` 요청을 받으려면 변경된 서버 스키마를 재배포해야 한다.
 
 서버 응답 순서:
 
