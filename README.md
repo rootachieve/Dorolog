@@ -6,7 +6,7 @@ Android 앱은 [서버 API 규격](server/API_CONTRACT.md)을 사용합니다. �
 
 AI 서버의 구현 내용과 실행 방법은 [AI 서버 README](server/README.md), TTS와 API 변경의 통합 검증 범위는 [통합 검증 결과](Android/INTEGRATION_VALIDATION.md)에 정리했습니다.
 
-서버 주소는 빌드할 때 지정합니다.
+기본 서버 주소는 `Android/gradle.properties`의 배포된 Render REST/WSS 주소입니다. Android Studio 실행에도 적용되며, 다른 서버를 사용할 때는 빌드 옵션으로 덮어쓸 수 있습니다.
 
 ```sh
 cd Android
