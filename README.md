@@ -1,9 +1,10 @@
 # Hyundai-pleos-app-contest
+
 가족의 대화를 잇고, 그 이야기를 지도 위에 남기는 차량용 가족 대화 서비스
 
-Android 앱은 [`feat/ai-server`의 API_CONTRACT.md](https://github.com/rootachieve/Dorolog/blob/feat/ai-server/server/API_CONTRACT.md)를 사용합니다. 반영 기준 커밋은 `b311c476bc1e4af399c0120181db746bed96f39a`입니다.
+Android 앱은 [서버 API 규격](server/API_CONTRACT.md)을 사용합니다. 서버 규격 반영 기준 커밋은 `b311c476bc1e4af399c0120181db746bed96f39a`입니다.
 
-TTS와 API 변경의 통합 검증 범위는 [통합 검증 결과](Android/INTEGRATION_VALIDATION.md)에 정리했습니다.
+AI 서버의 구현 내용과 실행 방법은 [AI 서버 README](server/README.md), TTS와 API 변경의 통합 검증 범위는 [통합 검증 결과](Android/INTEGRATION_VALIDATION.md)에 정리했습니다.
 
 서버 주소는 빌드할 때 지정합니다.
 
