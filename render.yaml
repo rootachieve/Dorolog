@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: dorolog-ai-server
+    runtime: python
+    region: singapore
+    plan: 0.5c-512mb
+    numInstances: 1
+    autoDeployTrigger: off
+
+    buildCommand: pip install -r server/requirements.txt
+    startCommand: uvicorn server.api:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /health
+
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-6.1-sol
+      - key: OPENAI_STT_MODEL
+        value: gpt-transcribe
+      - key: OPENAI_TTS_MODEL
+        value: gpt-4o-mini-tts
+      - key: OPENAI_TTS_VOICE
+        value: marin
+      - key: DOROLOG_DATABASE_PATH
+        value: /var/data/dorolog.db
+
+    disk:
+      name: dorolog-data
+      mountPath: /var/data
+      sizeGB: 1
