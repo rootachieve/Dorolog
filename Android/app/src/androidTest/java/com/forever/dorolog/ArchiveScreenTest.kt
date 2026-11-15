@@ -57,29 +57,33 @@ class ArchiveScreenTest {
         compose.onNodeWithText("최신순").performClick()
         compose.onNodeWithText("오래된순").performClick()
         compose.onNodeWithText("지도").performClick()
+        compose.onNodeWithText("지역 선택").performClick()
+        compose.onNodeWithText("부산 10").performClick()
         compose.onNodeWithText("오래된순").performClick()
         compose.onNodeWithText("최신순").performClick()
         compose.runOnIdle { assertEquals(1, requests.get()) }
     }
 
-    @Test fun overviewRowSelectsItsRegionInline_andListButtonRestoresOverview() {
+    @Test fun initialMapHasNoStoryList_andRegionSelectionOpensDetailsInline() {
         val openedTrips = AtomicInteger()
         setArchive(onTripClick = { _, _ -> openedTrips.incrementAndGet() })
         compose.onNodeWithText("지도").performClick()
         compose.onNodeWithText("함께한 이야기 51").assertIsDisplayed()
         compose.onNodeWithText("함께한 여행 13").assertIsDisplayed()
-        compose.onNodeWithTag("archive-map-story-sample-busan-2-story-0").performClick()
-        compose.onNodeWithText("목록으로").assertIsDisplayed()
+        compose.onNodeWithTag("archive-region-trips").assertDoesNotExist()
         compose.onNodeWithText("최신순").assertDoesNotExist()
+        compose.onNodeWithText("지역 선택").performClick()
+        compose.onNodeWithText("부산 10").performClick()
+        compose.onNodeWithText("지도로").assertIsDisplayed()
+        compose.onNodeWithText("최신순").assertIsDisplayed()
         compose.onAllNodesWithText("가족과 함께 나눈 이야기").onFirst().assertIsDisplayed()
         compose.onNodeWithTag("archive-map-story-sample-gangneung-2-story-0").assertDoesNotExist()
         compose.onNodeWithTag("archive-region-trips").performScrollToNode(hasTestTag("archive-map-story-sample-busan-1-story-4"))
         compose.onNodeWithTag("archive-map-story-sample-busan-1-story-4").assertIsDisplayed()
         compose.runOnIdle { assertEquals(0, openedTrips.get()) }
-        compose.onNodeWithText("목록으로").performClick()
-        compose.onNodeWithText("최신순").assertIsDisplayed()
-        compose.onNodeWithTag("archive-region-trips").performScrollToNode(hasTestTag("archive-map-story-sample-jeju-story-3"))
-        compose.onNodeWithTag("archive-map-story-sample-jeju-story-3").assertIsDisplayed()
+        compose.onNodeWithText("지도로").performClick()
+        compose.onNodeWithTag("archive-region-trips").assertDoesNotExist()
+        compose.onNodeWithText("최신순").assertDoesNotExist()
     }
 
     @Test fun selectedRegionShowsApiSummaryTimeAndEveryHighlight_withoutOpeningAnotherScreen() {
@@ -111,7 +115,8 @@ class ArchiveScreenTest {
                 "", emptyList(), null)))
         setArchive(ArchiveRepository({ ArchiveResponseDto(emptyList()) }, { map }))
         compose.onNodeWithText("지도").performClick()
-        compose.onNodeWithTag("archive-map-story-empty-story").performClick()
+        compose.onNodeWithText("지역 선택").performClick()
+        compose.onNodeWithText("서울 1").performClick()
         compose.onNodeWithText("시간 정보 없음").assertIsDisplayed()
         compose.onNodeWithText("이야기 내용이 아직 준비되지 않았어요.").assertIsDisplayed()
         compose.onNodeWithTag("archive-region-trips")
@@ -119,7 +124,7 @@ class ArchiveScreenTest {
         compose.onNodeWithText("핵심 대화 내용이 아직 준비되지 않았어요.").assertIsDisplayed()
     }
 
-    @Test fun narrowDetailKeepsListTouchable_andSystemBackReturnsToOverview() {
+    @Test fun narrowDetailKeepsListTouchable_andSystemBackReturnsToMap() {
         var state by mutableStateOf(ArchiveViewModel.UiState(tab = ArchiveTab.Map,
             content = ArchiveContent(regions = listOf(ArchiveRegion("부산", null, null, 1)),
                 stories = listOf(ArchiveStory("story", "trip", "부산에서 나눈 이야기", "부산", null, null,
@@ -136,13 +141,16 @@ class ArchiveScreenTest {
                 }
             }
         }
-        compose.onNodeWithText("목록으로").assertIsDisplayed().performClick()
+        compose.onNodeWithText("지도로").assertIsDisplayed().performClick()
         compose.runOnIdle { assertNull(state.selectedRegionId); assertEquals(0, homeVisits) }
-        compose.onNodeWithTag("archive-map-story-story").performClick()
-        compose.onNodeWithText("목록으로").assertIsDisplayed()
+        compose.onNodeWithTag("archive-region-trips").assertDoesNotExist()
+        compose.onNodeWithText("지역 선택").performClick()
+        compose.onNodeWithText("부산 1").performClick()
+        compose.onNodeWithText("지도로").assertIsDisplayed()
         compose.runOnIdle { dispatcher.onBackPressed() }
         compose.runOnIdle { assertNull(state.selectedRegionId); assertEquals(0, homeVisits) }
-        compose.onNodeWithText("목록으로").assertDoesNotExist()
+        compose.onNodeWithText("지도로").assertDoesNotExist()
+        compose.onNodeWithTag("archive-region-trips").assertDoesNotExist()
     }
 
     @Test fun highlightsAnimateOnFirstViewportEntry_andDoNotReplayWhenScrollingBack() {

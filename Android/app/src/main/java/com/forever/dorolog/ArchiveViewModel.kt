@@ -32,6 +32,10 @@ class ArchiveViewModel(
                 return stories.sortedWith(compareBy<ArchiveStory> { it.recordedAt == null }
                     .then(if (sort == ArchiveSort.Latest) byTime.reversed() else byTime))
             }
+
+        val storyNumbers: Map<Pair<String, String>, Int>
+            get() = visibleStories.sortedWith(compareBy<ArchiveStory> { it.recordedAt != null }.thenBy { it.recordedAt })
+                .mapIndexed { index, story -> (story.tripId to story.id) to index + 1 }.toMap()
     }
 
     private val _uiState = MutableStateFlow(UiState())

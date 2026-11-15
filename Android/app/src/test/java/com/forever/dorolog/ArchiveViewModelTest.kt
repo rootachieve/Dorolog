@@ -49,8 +49,11 @@ class ArchiveViewModelTest {
         }))
         runCurrent()
         assertEquals(listOf("newer", "older", "unknown"), vm.uiState.value.visibleStories.map { it.id })
+        val numbers = mapOf(("trip" to "unknown") to 1, ("trip" to "older") to 2, ("trip" to "newer") to 3)
+        assertEquals(numbers, vm.uiState.value.storyNumbers)
         vm.selectSort(ArchiveSort.Oldest)
         assertEquals(listOf("older", "newer", "unknown"), vm.uiState.value.visibleStories.map { it.id })
+        assertEquals(numbers, vm.uiState.value.storyNumbers)
     }
 
     @Test fun regionSelection_usesSavedStoryLocations_includingTripsOutsideLatestFifty() = runTest(dispatcher) {

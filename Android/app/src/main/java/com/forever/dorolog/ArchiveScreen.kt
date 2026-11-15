@@ -156,12 +156,12 @@ internal fun ArchiveScreen(
                 Text(stringResource(R.string.archive_sample), Modifier.padding(top = 8.dp),
                     fontSize = 14.sp, fontFamily = ArchiveFont, color = Color(0xFF646464))
             }
-            if (uiState.tab == ArchiveTab.Trips || uiState.selectedRegionId == null) {
+            if (uiState.tab == ArchiveTab.Trips || uiState.selectedRegionId != null) {
                 Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.End) {
                     ArchiveSortMenu(uiState.sort, onSortSelected, scale)
                 }
             } else {
-                Spacer(Modifier.height((64 * scale).dp))
+                Spacer(Modifier.height((16 * scale).dp))
             }
             when {
                 uiState.isLoading -> ArchiveMessage(stringResource(R.string.archive_loading), Modifier.weight(1f))
@@ -183,15 +183,21 @@ internal fun ArchiveScreen(
                 }
                 else -> if (wide) {
                     Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy((48 * scale).dp)) {
-                        ArchiveMapPanel(uiState, onRegionSelected, Modifier.weight(0.47f).fillMaxHeight())
-                        ArchiveRegionStories(uiState, onRegionSelected, scale, regionListState, quoteAppearances,
-                            animationsEnabled, Modifier.weight(0.53f).fillMaxHeight())
+                        ArchiveMapPanel(uiState, onRegionSelected,
+                            Modifier.weight(if (uiState.selectedRegionId == null) 1f else 0.47f).fillMaxHeight())
+                        if (uiState.selectedRegionId != null) {
+                            ArchiveRegionStories(uiState, onRegionSelected, scale, regionListState, quoteAppearances,
+                                animationsEnabled, Modifier.weight(0.53f).fillMaxHeight())
+                        }
                     }
                 } else {
                     Column(Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        ArchiveMapPanel(uiState, onRegionSelected, Modifier.fillMaxWidth().weight(0.52f))
-                        ArchiveRegionStories(uiState, onRegionSelected, scale, regionListState, quoteAppearances,
-                            animationsEnabled, Modifier.fillMaxWidth().weight(0.48f))
+                        ArchiveMapPanel(uiState, onRegionSelected,
+                            Modifier.fillMaxWidth().weight(if (uiState.selectedRegionId == null) 1f else 0.52f))
+                        if (uiState.selectedRegionId != null) {
+                            ArchiveRegionStories(uiState, onRegionSelected, scale, regionListState, quoteAppearances,
+                                animationsEnabled, Modifier.fillMaxWidth().weight(0.48f))
+                        }
                     }
                 }
             }
@@ -279,39 +285,20 @@ private fun ArchiveRegionStories(
     animationsEnabled: Boolean,
     modifier: Modifier,
 ) {
+    val storyNumbers = state.storyNumbers
     Column(modifier, verticalArrangement = Arrangement.spacedBy((32 * scale).dp)) {
-        if (state.selectedRegionId != null) {
-            TextButton(onClick = { onRegionSelected(null) },
-                shape = RoundedCornerShape((16 * scale).dp),
-                colors = ButtonDefaults.textButtonColors(containerColor = ForeverColors.selectionSecondary,
-                    contentColor = ForeverColors.summaryAccent)) {
-                Text("←", Modifier.padding(end = 8.dp), fontSize = (24 * scale).coerceAtLeast(16f).sp)
-                Text("목록으로", fontFamily = ArchiveFont, fontWeight = FontWeight.SemiBold,
-                    fontSize = (24 * scale).coerceAtLeast(16f).sp)
-            }
+        TextButton(onClick = { onRegionSelected(null) },
+            shape = RoundedCornerShape((16 * scale).dp),
+            colors = ButtonDefaults.textButtonColors(containerColor = ForeverColors.selectionSecondary,
+                contentColor = ForeverColors.summaryAccent)) {
+            Text("←", Modifier.padding(end = 8.dp), fontSize = (24 * scale).coerceAtLeast(16f).sp)
+            Text("지도로", fontFamily = ArchiveFont, fontWeight = FontWeight.SemiBold,
+                fontSize = (24 * scale).coerceAtLeast(16f).sp)
         }
         LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("archive-region-trips"), state = listState,
             verticalArrangement = Arrangement.spacedBy((20 * scale).dp), contentPadding = PaddingValues(bottom = 24.dp)) {
-            itemsIndexed(state.visibleStories, key = { _, story -> "${story.tripId.length}:${story.tripId}${story.id}" }) { index, story ->
-                if (state.selectedRegionId != null) {
-                    ArchiveStoryDetail(story, scale, quoteAppearances, animationsEnabled)
-                } else {
-                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape((36 * scale).dp)).background(Color.White)
-                        .clickable(role = Role.Button) { onRegionSelected(story.region) }
-                        .testTag("archive-map-story-${story.id}")
-                        .heightIn(min = (167 * scale).dp).padding((32 * scale).dp),
-                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy((23 * scale).dp)) {
-                        Box(Modifier.size((64 * scale).dp.coerceAtLeast(40.dp)).background(Color.Black, CircleShape), contentAlignment = Alignment.Center) {
-                            Text("${index + 1}", fontFamily = ArchiveFont, fontSize = (32 * scale).coerceAtLeast(18f).sp, color = Color.White)
-                        }
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(story.title, fontSize = (32 * scale).coerceAtLeast(20f).sp, fontFamily = ArchiveFont,
-                                color = Color.Black, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Text("${story.region} · ${story.date?.format(ArchiveDate) ?: "날짜 정보 없음"}", fontSize = (24 * scale).coerceAtLeast(14f).sp,
-                                fontFamily = ArchiveFont, color = Color(0xFF646464), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                }
+            itemsIndexed(state.visibleStories, key = { _, story -> "${story.tripId.length}:${story.tripId}${story.id}" }) { _, story ->
+                ArchiveStoryDetail(story, storyNumbers.getValue(story.tripId to story.id), scale, quoteAppearances, animationsEnabled)
             }
         }
     }
@@ -320,6 +307,7 @@ private fun ArchiveRegionStories(
 @Composable
 private fun ArchiveStoryDetail(
     story: ArchiveStory,
+    number: Int,
     scale: Float,
     quoteAppearances: MutableMap<Triple<String, String, Int>, Animatable<Float, AnimationVector1D>>,
     animationsEnabled: Boolean,
@@ -328,8 +316,16 @@ private fun ArchiveStoryDetail(
         .background(ForeverColors.summarySurface).testTag("archive-map-story-${story.id}")
         .padding((22 * scale).dp.coerceAtLeast(12.dp)),
         verticalArrangement = Arrangement.spacedBy((16 * scale).dp.coerceAtLeast(8.dp))) {
-        Text(story.title, fontFamily = ArchiveFont, fontWeight = FontWeight.SemiBold,
-            fontSize = (32 * scale).coerceAtLeast(20f).sp, color = ForeverColors.summaryTitle)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy((16 * scale).dp)) {
+            Box(Modifier.size((64 * scale).dp.coerceAtLeast(40.dp)).background(Color.Black, CircleShape),
+                contentAlignment = Alignment.Center) {
+                Text(number.toString(), fontFamily = ArchiveFont, fontSize = (32 * scale).coerceAtLeast(18f).sp, color = Color.White)
+            }
+            Text(story.title, Modifier.weight(1f), fontFamily = ArchiveFont, fontWeight = FontWeight.SemiBold,
+                fontSize = (32 * scale).coerceAtLeast(20f).sp, lineHeight = (40 * scale).coerceAtLeast(26f).sp,
+                color = ForeverColors.summaryTitle)
+        }
         ArchiveStoryMetadata(story, scale)
         Text(story.summary.takeIf { it.isNotBlank() } ?: "이야기 내용이 아직 준비되지 않았어요.",
             fontFamily = ArchiveFont, fontSize = (24 * scale).coerceAtLeast(14f).sp,

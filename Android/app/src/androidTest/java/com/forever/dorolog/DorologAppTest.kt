@@ -215,7 +215,7 @@ class DorologAppTest {
         compose.onNodeWithTag("departure-screen").assertDoesNotExist()
     }
 
-    @Test fun archiveMapDetailsStayInline_andBothBackActionsReturnOverviewWithoutLoadingSummary() {
+    @Test fun archiveMapDetailsStayInline_andBothBackActionsReturnToMapWithoutLoadingSummary() {
         val archiveRequests = CopyOnWriteArrayList<ArchiveSort>()
         val summaryRequests = CopyOnWriteArrayList<String>()
         setArchiveApp(archiveRequests, summaryRequests)
@@ -226,21 +226,24 @@ class DorologAppTest {
             compose.onNodeWithTag("archive-region-trips").performScrollToNode(hasTestTag(lastStory))
             compose.onNodeWithTag(lastStory).assertIsDisplayed()
             compose.onNodeWithText("여행 12").assertIsDisplayed()
-            compose.onNodeWithText("목록으로").assertIsDisplayed()
-            compose.onNodeWithText("오래된순").assertDoesNotExist()
+            compose.onNodeWithText("지도로").assertIsDisplayed()
+            compose.onNodeWithText("오래된순").assertIsDisplayed()
             compose.onNodeWithTag("settlement-screen").assertDoesNotExist()
             compose.onNodeWithTag("archive-map-story-server-story-14").assertDoesNotExist()
-            if (pass == 0) compose.onNodeWithText("목록으로").performClick()
+            if (pass == 0) compose.onNodeWithText("지도로").performClick()
             else compose.runOnIdle { backDispatcher.onBackPressed() }
-            compose.onNodeWithTag("archive-region-trips").assertIsDisplayed()
-            compose.onNodeWithText("오래된순").assertIsDisplayed()
-            compose.onNodeWithText("목록으로").assertDoesNotExist()
-            compose.onNodeWithTag("archive-map-story-server-story-1").assertIsDisplayed()
+            compose.onNodeWithTag("archive-region-trips").assertDoesNotExist()
+            compose.onNodeWithText("오래된순").assertDoesNotExist()
+            compose.onNodeWithText("지도로").assertDoesNotExist()
+            compose.onNodeWithTag("archive-map-story-server-story-1").assertDoesNotExist()
             compose.runOnIdle {
                 assertEquals(listOf(ArchiveSort.Latest), archiveRequests.toList())
                 assertEquals(emptyList<String>(), summaryRequests.toList())
             }
-            if (pass == 0) compose.onNodeWithTag("archive-map-story-server-story-1").performClick()
+            if (pass == 0) {
+                compose.onNodeWithText("지역 선택").performClick()
+                compose.onNodeWithText("부산 12").performClick()
+            }
         }
     }
 
@@ -304,10 +307,11 @@ class DorologAppTest {
     private fun showOldestBusanTrips() {
         compose.onNodeWithText("미리보기 데이터 · 서버 미연결").assertDoesNotExist()
         compose.onNodeWithText("지도").performClick()
-        compose.onNodeWithText("최신순").performClick()
-        compose.onNodeWithText("오래된순").performClick()
+        compose.onNodeWithTag("archive-region-trips").assertDoesNotExist()
         compose.onNodeWithText("지역 선택").performClick()
         compose.onNodeWithText("부산 12").performClick()
+        compose.onNodeWithText("최신순").performClick()
+        compose.onNodeWithText("오래된순").performClick()
         compose.onNodeWithTag("archive-region-trips").assertIsDisplayed()
     }
 
