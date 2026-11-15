@@ -202,6 +202,7 @@ internal fun ParkedScreen(
 @Composable
 private fun ParkedAction(label: String, icon: Int?, onClick: () -> Unit, enabled: Boolean,
     scale: Float, modifier: Modifier) {
+    val fontSize = (32 * scale).coerceAtLeast(18f)
     Button(onClick = onClick, enabled = enabled, modifier = modifier, shape = RoundedCornerShape(24.dp),
         colors = ButtonDefaults.buttonColors(containerColor = ParkedButton, contentColor = Color.Black),
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp)) {
@@ -210,6 +211,6 @@ private fun ParkedAction(label: String, icon: Int?, onClick: () -> Unit, enabled
             Spacer(Modifier.width(8.dp))
         }
         Text(label, fontFamily = ParkedFont, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
-            fontSize = (32 * scale).coerceAtLeast(18f).sp)
+            fontSize = fontSize.sp, lineHeight = (fontSize * 1.3f).sp)
     }
 }
