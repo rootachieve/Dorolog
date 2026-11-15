@@ -196,7 +196,7 @@ private fun ArchiveBrowser(
         }
     } else {
         TripSummaryScreen(tripId = trip.first, destinationName = trip.second,
-            onDone = onHome, onBack = { selectedTrip = null }, modifier = modifier,
+            onDone = { selectedTrip = null }, onBack = { selectedTrip = null }, modifier = modifier,
             animationsEnabled = animationsEnabled, browsingAllowed = browsingAllowed,
             repository = summaryRepository)
     }

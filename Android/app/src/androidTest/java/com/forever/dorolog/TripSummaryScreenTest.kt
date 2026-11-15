@@ -63,7 +63,7 @@ class TripSummaryScreenTest {
         compose.runOnIdle { assertTrue(archive); assertFalse(home); archive = false }
         compose.runOnIdle { dispatcher.onBackPressed() }
         compose.runOnIdle { assertTrue(archive); assertFalse(home) }
-        compose.onNodeWithText("홈으로").performClick()
+        compose.onNodeWithText("확인").performClick()
         compose.runOnIdle { assertTrue(home) }
     }
 

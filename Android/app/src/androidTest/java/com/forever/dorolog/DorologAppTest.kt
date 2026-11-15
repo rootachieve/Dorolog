@@ -247,28 +247,30 @@ class DorologAppTest {
         }
     }
 
-    @Test fun archiveTripSummaryConfirmationReturnsHome_andNextArchiveEntryHasFreshStateAndRequest() {
+    @Test fun archiveTripSummaryConfirmationRestoresArchiveSortAndScroll_withoutReloading() {
         val archiveRequests = CopyOnWriteArrayList<ArchiveSort>()
         val summaryRequests = CopyOnWriteArrayList<String>()
         setArchiveApp(archiveRequests, summaryRequests)
         openScreen("이야기 보관함", "archive-screen")
         compose.onNodeWithText("최신순").performClick()
         compose.onNodeWithText("오래된순").performClick()
-        compose.onNodeWithTag("archive-trip-server-trip-1").performClick()
+        compose.onNodeWithTag("archive-trip-grid").performScrollToNode(hasTestTag("archive-trip-server-trip-12"))
+        compose.onNodeWithTag("archive-trip-server-trip-12").assertIsDisplayed().performClick()
         compose.onNodeWithTag("settlement-screen").assertIsDisplayed()
         compose.onNodeWithText("확인").performClick()
-        assertMainReady()
-        openScreen("이야기 보관함", "archive-screen")
+        compose.onNodeWithTag("archive-screen").assertIsDisplayed()
         compose.onNodeWithTag("archive-trip-grid").assertIsDisplayed()
-        compose.onNodeWithText("최신순").assertIsDisplayed()
-        compose.onNodeWithText("목록으로").assertDoesNotExist()
+        compose.onNodeWithText("오래된순").assertIsDisplayed()
+        compose.onNodeWithTag("archive-trip-server-trip-12").assertIsDisplayed()
+        compose.onNodeWithTag("archive-trip-server-trip-1").assertIsNotDisplayed()
+        compose.onNodeWithTag("settlement-screen").assertDoesNotExist()
         compose.runOnIdle {
-            assertEquals(listOf(ArchiveSort.Latest, ArchiveSort.Latest), archiveRequests.toList())
-            assertEquals(listOf("server-trip-1"), summaryRequests.toList())
+            assertEquals(listOf(ArchiveSort.Latest), archiveRequests.toList())
+            assertEquals(listOf("server-trip-12"), summaryRequests.toList())
         }
     }
 
-    @Test fun summaryBecomingRestrictedThroughAppHidesMetadata_andKeepsArchiveBackAndHomeActions() {
+    @Test fun summaryBecomingRestrictedThroughAppHidesMetadata_andConfirmationReturnsToArchive() {
         val browsingAllowed = mutableStateOf(true)
         val archiveRequests = CopyOnWriteArrayList<ArchiveSort>()
         val summaryRequests = CopyOnWriteArrayList<String>()
@@ -289,8 +291,11 @@ class DorologAppTest {
         compose.onNodeWithText("저장된 이야기", substring = true).assertDoesNotExist()
         compose.runOnIdle { assertEquals(listOf("server-trip-14"), summaryRequests.toList()) }
         compose.onNodeWithText("‹ 뒤로").assertIsDisplayed().assertIsEnabled()
-        compose.onNodeWithText("홈으로").assertIsDisplayed().assertIsEnabled().performClick()
-        assertMainReady()
+        compose.onNodeWithText("확인").assertIsDisplayed().assertIsEnabled().performClick()
+        compose.onNodeWithTag("archive-screen").assertIsDisplayed()
+        compose.onNodeWithText("안전한 곳에 정차한 후\n이야기 지도를 확인해 주세요").assertIsDisplayed()
+        compose.onNodeWithTag("settlement-screen").assertDoesNotExist()
+        compose.runOnIdle { assertEquals(listOf(ArchiveSort.Latest), archiveRequests.toList()) }
     }
 
     private fun setArchiveApp(archiveRequests: MutableList<ArchiveSort>, summaryRequests: MutableList<String>) {

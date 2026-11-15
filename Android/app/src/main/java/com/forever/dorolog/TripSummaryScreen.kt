@@ -111,7 +111,7 @@ private fun RestrictedTripSummary(onDone: () -> Unit, onBack: (() -> Unit)?, mod
             Button(onClick = onDone, modifier = Modifier.heightIn(min = 48.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = ForeverColors.summaryAccent,
                     contentColor = ForeverColors.summarySurface)) {
-                Text("홈으로", fontFamily = SummaryFont, fontSize = 20.sp)
+                Text("확인", fontFamily = SummaryFont, fontSize = 20.sp)
             }
         }
     }
