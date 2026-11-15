@@ -51,9 +51,11 @@ class DepartureViewModel(
     val uiState = _uiState.asStateFlow()
     private var active = false
     private var moving = false
+    private var hasDriven = false
     private var parked: Boolean? = null
     private var destinationSetPending = false
     private var navigationDestination: Destination? = null
+    private var parkedDestination: Destination? = null
     private var storiesLoaded = false
     private var storiesRefreshPending = false
     private var countdownJob: Job? = null
@@ -103,7 +105,10 @@ class DepartureViewModel(
 
     fun setActive(active: Boolean) {
         this.active = active
-        if (!active) { moving = false; parked = null; cancelCountdown() }
+        if (!active) {
+            moving = false; parked = null; cancelCountdown()
+            _uiState.update { it.copy(motionAvailable = null) }
+        }
         updateSelectionAvailability()
     }
 
@@ -111,23 +116,36 @@ class DepartureViewModel(
         if (!active || uiState.value.finishingTrip) return
         val available = speed != null && speed.isFinite()
         moving = available && abs(speed!!) > 0f
+        if (moving) hasDriven = true
         _uiState.update { it.copy(motionAvailable = available) }
-        if (moving && uiState.value.phase == Phase.Arrived) beginRecording(null)
-        if (!moving && parked == true && uiState.value.arrived && uiState.value.phase == Phase.Talk) onParkedChanged(true)
+        resumeAfterParkingIfDriving()
+        if (!moving && parked == true) onParkedChanged(true)
         updateSelectionAvailability()
         if (moving) startCountdownIfReady() else cancelCountdown()
     }
 
     fun onParkedChanged(value: Boolean?) {
-        if (uiState.value.finishingTrip) return
+        if (!active || uiState.value.finishingTrip) return
         parked = value
-        if (value == true && !moving && uiState.value.arrived && uiState.value.phase != Phase.Summary &&
+        if (value != false) cancelCountdown()
+        if (value == true && !moving && uiState.value.motionAvailable == true && (hasDriven || uiState.value.arrived) &&
+            uiState.value.phase != Phase.Summary &&
             uiState.value.phase != Phase.Arrived) {
+            hasDriven = false
+            parkedDestination = navigationDestination
             cancelCountdown()
+            loadJob?.cancel()
             _uiState.update { it.copy(phase = Phase.Arrived) }
             retryStories()
         }
+        resumeAfterParkingIfDriving()
+        if (value == false && moving) startCountdownIfReady()
         updateSelectionAvailability()
+    }
+
+    private fun resumeAfterParkingIfDriving() {
+        if (uiState.value.phase == Phase.Arrived && parked == false && moving && !destinationSetPending &&
+            uiState.value.navigationAvailable == true) beginRecording(navigationDestination)
     }
 
     fun onDestinationSet() {
@@ -139,7 +157,7 @@ class DepartureViewModel(
     fun onDestinationConfirmed(destination: Destination?) {
         if (!destinationSetPending || uiState.value.finishingTrip) return
         destinationSetPending = false
-        if (destination != null && uiState.value.arrived) beginRecording(destination)
+        if (destination != null && uiState.value.arrived && uiState.value.phase != Phase.Arrived) beginRecording(destination)
         updateSelectionAvailability()
     }
 
@@ -154,6 +172,10 @@ class DepartureViewModel(
         _uiState.update { it.copy(navigationAvailable = true) }
         if (destinationSetPending) return
         navigationDestination = destination
+        if (state.phase == Phase.Arrived) {
+            resumeAfterParkingIfDriving()
+            return
+        }
         if (state.arrived) {
             // Ending navigation after arrival must not dismiss story selection.
             if (destination != null && state.destination?.name != destination.name) beginRecording(destination)
@@ -164,12 +186,17 @@ class DepartureViewModel(
     }
 
     private fun beginRecording(destination: Destination?) {
+        if (parked == true) return
         val state = uiState.value
+        val needsTopics = state.phase == Phase.Arrived && destination != null && destination != parkedDestination
         val topic = state.topics.firstOrNull { it.id == state.selectedTopicId }
         storiesJob?.cancel()
         _uiState.update { it.copy(
             destination = destination,
-            phase = if (state.skipUntilArrival) Phase.Skipping else if (topic != null) Phase.Talk else Phase.Ready,
+            topics = if (needsTopics) emptyList() else it.topics,
+            selectedTopicId = if (needsTopics) null else it.selectedTopicId,
+            hasBrowsedTopics = if (needsTopics) false else it.hasBrowsedTopics,
+            phase = if (state.skipUntilArrival) Phase.Skipping else if (topic != null && !needsTopics) Phase.Talk else Phase.Ready,
             arrived = false, storiesLoading = false, storiesError = null, canSelectStories = false,
         ) }
         if (uiState.value.phase == Phase.Ready) retry()
@@ -177,7 +204,7 @@ class DepartureViewModel(
 
     private fun beginTransition() {
         val state = uiState.value
-        if (state.phase != Phase.Ready || state.skipUntilArrival || state.arrived ||
+        if (state.phase != Phase.Ready || parked != false || !moving || state.skipUntilArrival || state.arrived ||
             state.topics.none { it.id == state.selectedTopicId }) return
         cancelCountdown()
         _uiState.update { it.copy(phase = Phase.Morphing) }
@@ -191,16 +218,21 @@ class DepartureViewModel(
         val state = uiState.value
         if (state.arrived || state.phase == Phase.Summary || state.finishingTrip) return
         cancelCountdown()
-        loadJob?.cancel()
-        val skipped = state.phase == Phase.Skipping
+        val showStories = state.phase == Phase.Arrived || parked == true && !moving && state.motionAvailable == true
+        if (showStories) loadJob?.cancel()
+        val skipped = state.skipUntilArrival
         _uiState.update { it.copy(
             destination = destination ?: state.destination, arrived = true,
-            phase = if (parked == true && !moving) Phase.Arrived else Phase.Talk,
-            skipUntilArrival = if (skipped) false else state.skipUntilArrival,
+            phase = if (showStories) Phase.Arrived else state.phase,
+            skipUntilArrival = false,
             arrivalDialogPending = state.arrivalDialogPending || skipped,
         ) }
         updateSelectionAvailability()
-        if (uiState.value.phase == Phase.Arrived) retryStories()
+        if (uiState.value.phase == Phase.Arrived && state.phase != Phase.Arrived) {
+            hasDriven = false
+            parkedDestination = navigationDestination
+            retryStories()
+        }
     }
 
     fun retryStories() {
@@ -267,7 +299,7 @@ class DepartureViewModel(
         val state = uiState.value
         if (state.phase == Phase.Summary || state.finishingTrip) return
         cancelCountdown()
-        if (state.skipUntilArrival) {
+        if (state.skipUntilArrival || state.phase == Phase.Skipping) {
             _uiState.update { it.copy(skipUntilArrival = false, phase = Phase.Ready, arrived = false, canSelectStories = false) }
             retry()
         } else if (state.phase == Phase.Arrived && state.canSelectStories) {
@@ -317,7 +349,7 @@ class DepartureViewModel(
     fun leave() { setActive(false) }
 
     private fun updateSelectionAvailability() {
-        _uiState.update { it.copy(canSelectStories = active && parked == true && !moving &&
+        _uiState.update { it.copy(canSelectStories = active && parked == true && !moving && it.motionAvailable == true &&
             it.phase == Phase.Arrived && !destinationSetPending && !it.finishingTrip) }
     }
 
@@ -328,7 +360,7 @@ class DepartureViewModel(
 
     private fun startCountdownIfReady() {
         val state = uiState.value
-        if (!active || !moving || state.navigationAvailable != true || state.phase != Phase.Ready || state.loading || state.contentError || state.arrived ||
+        if (!active || !moving || parked != false || state.navigationAvailable != true || state.phase != Phase.Ready || state.loading || state.contentError || state.arrived ||
             state.skipUntilArrival || state.finishingTrip || state.selectedTopicId == null || countdownJob?.isActive == true) return
         _uiState.update { it.copy(countdownSeconds = 5) }
         countdownJob = viewModelScope.launch {

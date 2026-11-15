@@ -157,8 +157,8 @@ internal fun DepartureRoute(
     DisposableEffect(source) {
         onDispose { source.stop(); drivingViewModel.setForeground(false) }
     }
-    LaunchedEffect(uiState.phase, uiState.arrived, uiState.finishingTrip) {
-        if (uiState.phase == DepartureViewModel.Phase.Talk && !uiState.arrived && !uiState.finishingTrip) {
+    LaunchedEffect(uiState.phase, uiState.finishingTrip) {
+        if (uiState.phase == DepartureViewModel.Phase.Talk && !uiState.finishingTrip) {
             uiState.topics.firstOrNull { it.id == uiState.selectedTopicId }?.let {
                 drivingViewModel.start(it, uiState.destination, uiState.tripId)
             }
@@ -198,9 +198,7 @@ internal fun DepartureRoute(
         DepartureViewModel.Phase.Summary -> TripSummaryScreen(uiState.tripId, back, modifier,
             destinationName = uiState.destination?.name, animationsEnabled = summaryAnimationsEnabled,
             browsingAllowed = summaryBrowsingAllowed, repository = summaryRepository)
-        DepartureViewModel.Phase.Talk -> TalkScreen(uiState,
-            if (uiState.arrived) drivingState.copy(paused = true, resumeEnabled = false,
-                status = "목적지에 도착했어요. P단으로 주차하면 이야기를 고를 수 있어요") else drivingState,
+        DepartureViewModel.Phase.Talk -> TalkScreen(uiState, drivingState,
             drivingViewModel::pause, drivingViewModel::resume,
             onFinish = finishTrip, modifier = modifier)
         else -> DepartureScreen(uiState = uiState, onBack = back, onSelectTopic = vm::selectTopic,

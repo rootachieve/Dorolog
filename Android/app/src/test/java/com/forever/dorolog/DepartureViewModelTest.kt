@@ -47,6 +47,7 @@ class DepartureViewModelTest {
     @After fun tearDown() { Dispatchers.resetMain() }
     private fun DepartureViewModel.navigationReady(destination: Destination? = null) = apply {
         setActive(true)
+        onParkedChanged(false)
         onNavigationChanged(destination, true)
     }
 
@@ -151,6 +152,7 @@ class DepartureViewModelTest {
         advanceTimeBy(10_000); runCurrent(); vm.setActive(true)
         assertEquals(DepartureViewModel.Phase.Ready, vm.uiState.value.phase)
         assertNull(vm.uiState.value.countdownSeconds)
+        vm.onParkedChanged(false)
         vm.onSpeedChanged(1f); runCurrent()
         assertEquals(5, vm.uiState.value.countdownSeconds)
         vm.setActive(false)

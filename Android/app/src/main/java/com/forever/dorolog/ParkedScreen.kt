@@ -82,7 +82,7 @@ internal fun ParkedScreen(
                     Text("새로고침", fontFamily = ParkedFont)
                 }
             }
-            Text("목적지를 설정하면 자동으로 기록모드로 돌아가요. 고르기는 목적지를 고르기 전까지만 할 수 있어요.",
+            Text("다시 주행하면 기록 모드로 돌아가요. 목적지를 바꿨다면 새 주제를 골라요.",
                 color = Color(0xFF646464), fontFamily = ParkedFont,
                 fontSize = (28 * scale).coerceAtLeast(16f).sp, lineHeight = (39 * scale).coerceAtLeast(22f).sp,
                 modifier = Modifier.padding(top = 10.dp, bottom = (70 * scale).dp.coerceAtLeast(16.dp),
