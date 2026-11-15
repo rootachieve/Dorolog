@@ -120,7 +120,7 @@ internal fun ParkedScreen(
                                         horizontalArrangement = Arrangement.spacedBy((23 * scale).dp.coerceAtLeast(14.dp))) {
                                         Box(Modifier.size((64 * scale).dp.coerceAtLeast(40.dp)).background(Color.Black, CircleShape),
                                             contentAlignment = Alignment.Center) {
-                                            Text("${index + 1}", color = Color.White, fontFamily = ParkedFont,
+                                            Text("${uiState.stories.size - index}", color = Color.White, fontFamily = ParkedFont,
                                                 fontSize = (32 * scale).coerceAtLeast(18f).sp)
                                         }
                                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
